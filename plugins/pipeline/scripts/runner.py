@@ -28,6 +28,8 @@ gates — the two pauses in briefs/workflow.md are unchanged — they are where 
           already holds this feature
   exit 7  it was interrupted (SIGTERM, SIGINT, SIGHUP — `--stop` sends the first)
   exit 1  the runner itself failed
+  exit 11 the repo is single-session (`"mode": "single-session"` in .claude/pipeline.json): nothing runs
+          unattended there, and `--unfinished` says nothing
 
 Run it again to carry on: every finished run is in the feature's .runs/<slug>/RUNS.jsonl, so a step
 whose agents all finished is recorded, and one that was cut short is run again in full.
@@ -1121,6 +1123,9 @@ def main() -> int:
         return stop_runner(path)
     if opts.status or opts.wait:
         return report(path, opts.wait, opts.json)
+    if single_session(root):
+        print(f"runner: {cfg.single_session_refusal('the unattended runner', root)}", file=sys.stderr)
+        return EXIT_SINGLE_SESSION
     for name in [k for k in os.environ if SESSION_ENV_RE.match(k)]:
         del os.environ[name]
     os.environ[RUNNER_ENV] = "1"
@@ -1173,6 +1178,12 @@ def main() -> int:
 
 
 EXIT_NEVER_STARTED = 10
+EXIT_SINGLE_SESSION = 11
+
+
+def single_session(root: Path) -> bool:
+    """Whether the repo runs single-session: no unattended runs, and nothing for `--unfinished` to announce."""
+    return cfg.mode_of(root) == cfg.SINGLE_SESSION
 
 
 EXIT_BY_STATE = {"done": 0, "running": 3, "dead": 8, "hung": 9}
@@ -1288,7 +1299,7 @@ def unfinished(root: Path) -> int:
     a session's context, so it is fixed words, the slug and a step name — never a stop reason,
     which can quote an agent. Silent inside the runner's own agents.
     """
-    if os.environ.get(RUNNER_ENV):
+    if os.environ.get(RUNNER_ENV) or single_session(root):
         return 0
     def clean(text) -> str:
         return re.sub(r"[^\w. -]", "", str(text))[:60]

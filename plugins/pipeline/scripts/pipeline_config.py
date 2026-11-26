@@ -16,6 +16,13 @@ lint, format, check and gate it, and the reviewers that cover it. There is no bu
 layout: a repo without the file gets a ConfigError naming it, and a file missing a key gets one
 naming that key.
 
+`mode` (optional) is how the repo runs the pipeline: `"pipeline"` (the default) — the multi-agent
+pipeline with its implicit trigger, two pauses, conductor (`pipeline.py next`) and unattended runner —
+or `"single-session"`: the work is done in the session itself, so `session-context.py` loads only
+the rules that still apply (the lanes, the testing rule) with a note in place of the rest, and
+`runner.py` and `pipeline.py next` refuse to run. Everything that reads `surfaces` works the same in
+either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
+
 Agent names leave the scripts through `agent()` and come back through `role_of()`: the plugin's own
 agents are spawned as `pipeline:<name>`, the repo's own (its surface reviewers) by their bare name.
 
@@ -38,6 +45,8 @@ CONFIG = Path(".claude") / "pipeline.json"  # relative to the repo root
 PROFILE = Path(".claude") / "runner-settings.json"  # relative to the repo root
 REPO_BRIEFS = Path(".claude") / "briefs"  # the briefs a repo adds to the plugin's, relative to its root
 LANGUAGES = ("go", "ts")
+MODES = ("pipeline", "single-session")  # `mode` in pipeline.json; the first is the default
+SINGLE_SESSION = "single-session"
 
 # The agents the plugin ships (`<plugin>/agents/<name>.md`). Every other agent is the repo's own.
 PLUGIN_AGENTS = ("architect", "developer", "refuter", "pipeline-reviewer", "triage", "product-vision",
@@ -227,6 +236,11 @@ class Config:
         self.copy_sources: dict = raw.get("copy_sources", {})
         self.checks: dict = raw.get("checks", {})
         self.runner: dict = raw.get("runner", {})
+        self.mode: str = raw.get("mode", MODES[0])
+
+    @property
+    def single_session(self) -> bool:
+        return self.mode == SINGLE_SESSION
 
     def surface(self, name: str) -> Surface | None:
         return next((s for s in self.surfaces if s.name == name), None)
@@ -302,6 +316,8 @@ def validate(path: Path, raw) -> None:
         raise ConfigError(f"{path}: must be a JSON object")
     _need(path, raw, "pass_conditions", "str_list", "")
     _need(path, raw, "feature_budget_usd", "number", "")
+    if _need(path, raw, "mode", str, "", optional=True) not in (None, *MODES):
+        _fail(path, "mode", f"must be one of {', '.join(MODES)}")
     surfaces = _need(path, raw, "surfaces", dict, "")
     if not surfaces:
         _fail(path, "surfaces", "must name at least one surface")
@@ -378,3 +394,21 @@ def load(root: Path) -> Config:
         validate(path, raw)
         _CACHE[key] = Config(root, path, raw)
     return _CACHE[key]
+
+
+def mode_of(root: Path) -> str:
+    """The repo's `mode`, read leniently: `"pipeline"` when the config is missing, unreadable or names
+    no valid mode. For callers that must never fail on the config (the session-start hook); everything
+    else reads `load(root).mode`, which is validated."""
+    try:
+        raw = json.loads((Path(root) / CONFIG).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return MODES[0]
+    mode = raw.get("mode") if isinstance(raw, dict) else None
+    return mode if mode in MODES else MODES[0]
+
+
+def single_session_refusal(what: str, root: Path) -> str:
+    """The one line `runner.py` and `pipeline.py next` print instead of running in a single-session repo."""
+    return (f"{what} does not run here: {Path(root) / CONFIG} sets \"mode\": \"{SINGLE_SESSION}\" — "
+            f"do the work in this session (and `/pipeline:retro <slug>` when a Full-lane feature closes)")

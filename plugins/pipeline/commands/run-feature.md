@@ -6,6 +6,10 @@ allowed-tools: Read, Bash
 
 Run the feature: **$ARGUMENTS**
 
+Not in a single-session repo (`"mode": "single-session"` in `.claude/pipeline.json`). There the
+runner refuses with one line and exit 11, and so does `pipeline.py next`. Build the feature in the
+session instead, and run `/pipeline:retro <slug>` when it closes.
+
 You start the runner, wait for it, and read why it stopped. You do not orchestrate: no agent
 is spawned from this session, and `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py next` is never called by hand while a
 runner holds the feature.

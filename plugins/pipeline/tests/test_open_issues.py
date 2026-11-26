@@ -187,6 +187,42 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("is not a specification (`<!-- spec-check: v4 -->`)", err)
 
+    def body(self, create: str) -> list[str]:
+        """An `issue create` call's body, one line per part (the fake gh logs newlines as `|`)."""
+        return create.split(" --body ", 1)[1].split(" --label ", 1)[0].split("|")
+
+    def test_the_feature_issue_opens_with_why_from_the_primary_goal_then_the_four_other_parts(self):
+        self.run_open()
+
+        lines = self.body(self.creates()[0])
+
+        self.assertEqual(lines[0], "Why: not possible yet — an owner shares one task with one member.")
+        self.assertEqual([l.split(":", 1)[0] for l in lines], ["Why", "Design", "State", "Approach", "Done when"])
+
+    def test_each_scenario_issue_opens_with_why_from_its_title_and_action(self):
+        self.run_open()
+
+        first, second = (self.body(c) for c in self.creates()[1:3])
+
+        self.assertEqual(first[0], "Why: not built yet — Owner shares a task (`SharingService.Share`).")
+        self.assertEqual(second[0], "Why: not built yet — Owner stops sharing (`SharingService.Unshare`).")
+        self.assertEqual([l.split(":", 1)[0] for l in first], ["Why", "Design", "State", "Approach", "Done when"])
+
+    def test_a_spec_with_no_primary_goal_line_takes_why_from_the_intent_sections_first_line(self):
+        self.spec.write_text(SPEC.replace("**Primary goal**: an owner shares one task with one member.",
+                                          "Owners cannot share a task with anyone today."))
+
+        self.run_open()
+
+        self.assertEqual(self.body(self.creates()[0])[0], "Why: not possible yet — Owners cannot share a task with anyone today.")
+
+    def test_a_scenario_with_no_action_takes_why_from_its_title_alone(self):
+        self.spec.write_text(SPEC.replace("Action: `SharingService.Unshare`\n", ""))
+
+        self.run_open()
+
+        self.assertEqual(self.body(self.creates()[2])[0], "Why: not built yet — Owner stops sharing.")
+
 
 if __name__ == "__main__":
     unittest.main()

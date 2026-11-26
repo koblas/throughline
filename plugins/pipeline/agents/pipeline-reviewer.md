@@ -66,6 +66,14 @@ it was seen in, and every `rc` slug already proposed. Add this feature's escapes
 counts before you propose anything. A brief with no such tables (a hand-typed retro): run
 `${CLAUDE_PLUGIN_ROOT}/scripts/retro-stats.py --exclude <slug>` yourself.
 
+**No ledger** (a single-session feature, `/pipeline:retro`): a brief with an `## Evidence — no
+ledger: single-session` section replaces everything in `.runs/<slug>/` (do not look there). Your
+inputs are the specification and the evidence: per merged PR, its gate findings, other review
+comments and fix commits. An escape is a BLOCKER/MAJOR found on a PR, or a fix commit, that an
+earlier stage should have caught. `found_in` is `PR-#N`. Every token field in *Profile*, and
+`cost_k`, is `n/a`. Leave *Cost by stage* with only its heading: the script writes
+`no ledger: single-session` there.
+
 Your reply is saved verbatim as the feature's retro — `docs/specs/<slug>.retro.md` — `next` then appends the
 feature's METRICS.md under `## Metrics`; do not write that section yourself — and aggregated across
 features to find pipeline-wide patterns, so it is **data first**: no preamble, exactly the
@@ -104,7 +112,7 @@ construction: they change the pipeline, not this feature.
 ## Escapes
 | id | found_in | sev | should_catch | class | surface | cost_k | covering_rule | gap |
 - id: `E1`, `E2`, … — the ids a rule candidate's `addresses` cell names
-- found_in: CHECKPOINT-SCENARIO-NN / REVIEW-NN
+- found_in: CHECKPOINT-SCENARIO-NN / REVIEW-NN / PR-#N (no ledger)
 - should_catch (the run that owned it; first three are kind `scope`): triage (fact in the
   code) / product-vision (surface, copy, contract) / sizing (fold, split) / plan (architect
   checklist) / build (developer run) / checkpoint (step 5a) / review (an earlier gate round)
