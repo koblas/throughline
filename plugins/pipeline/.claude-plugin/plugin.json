@@ -1,6 +1,6 @@
 {
   "name": "pipeline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Scenario-first TDD agent pipeline: triage, scoping, architect/developer build loop, reviewer gate, unattended runner and retro. Each repo describes its surfaces in .claude/pipeline.json.",
   "author": {
     "name": "David Koblas"
