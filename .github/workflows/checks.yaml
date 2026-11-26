@@ -1,0 +1,32 @@
+name: "checks"
+
+# The unit tests of the pipeline's pure-Python checks, on every pull request and push to main.
+# The rest of plugins/pipeline/tests drives Go, npx and git in scratch repos and needs that
+# toolchain on PATH; run it locally:  python3 -m unittest discover -s plugins/pipeline/tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Marketplace and plugin manifests parse
+        run: |
+          python3 -m json.tool .claude-plugin/marketplace.json > /dev/null
+          python3 -m json.tool plugins/pipeline/.claude-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/pipeline/hooks/hooks.json > /dev/null
+      - name: Unit tests of the pure-Python checks
+        run: |
+          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_not_built.py'
+          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_spec_check.py'
+          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_diff_coverage.py'

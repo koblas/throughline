@@ -1,0 +1,14 @@
+{
+  "name": "throughline",
+  "description": "throughline's Claude Code plugins.",
+  "owner": {
+    "name": "koblas"
+  },
+  "plugins": [
+    {
+      "name": "pipeline",
+      "source": "./plugins/pipeline",
+      "description": "Scenario-first TDD agent pipeline: triage, scoping, architect/developer build loop, reviewer gate, unattended runner and retro."
+    }
+  ]
+}

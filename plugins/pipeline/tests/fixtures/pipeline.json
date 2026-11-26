@@ -1,0 +1,122 @@
+{
+  "pass_conditions": [
+    "gate_rounds <= 2",
+    "dev_runs_max <= 8",
+    "stops <= 1",
+    "cost_per_scenario_usd <= 5"
+  ],
+  "feature_budget_usd": 75,
+  "security_paths": "^(go/services/core/(identity|authn|oauthclient|oauthuser)/|go/services/publicapi/(oidcas|auth)/|go/services/publicapi/(bearer[^/]*|policy_authz)\\.go$|go/cmd/edge/oidcas/|go/libs/interceptors/|frontend/packages/auth/)",
+  "build_definitions": "(^|/)BUILD(\\.\\w+)?$|(^|/)\\.heph|^devenv\\.|^nix/|(^|/)buf(\\.gen|\\.work)?\\.yaml$",
+  "requests": {
+    "codegen": {
+      "command": ["heph", "run", "codegen", "//..."],
+      "note": "After a codegen, grep both generated artifacts as `proto-regen-loop` says."
+    }
+  },
+  "test_support_paths": "/src/test/",
+  "generated_roots": ["go/gen/", "papi/", "frontend/packages/genapi/"],
+  "top_dirs": ["go", "frontend", "protos", "papi", "docs", "aws-pulumi", ".claude"],
+  "copy_sources": {
+    "roots": [{"path": "go"}, {"path": "protos"}, {"path": "frontend/packages", "only_under": "src"}],
+    "suffixes": [".go", ".proto", ".ts", ".tsx", ".js", ".jsx"],
+    "skip_dirs": ["node_modules", "gen", "genapi", "dist", "build", ".heph"]
+  },
+  "checks": {
+    "reason_parity": {
+      "proto": "protos/api/v1/error.proto",
+      "union": "frontend/packages/shared/src/errors.ts",
+      "drift": [
+        "identity_email_already_verified", "identity_provider_already_linked", "identity_provider_last_signin",
+        "identity_provider_revoke_pending", "mfa_already_enabled",
+        "identity_passkey_already_registered", "identity_passkey_last_signin", "identity_passkey_limit_reached",
+        "identity_passkey_options_expired", "identity_passkey_revoke_pending",
+        "identity_passkey_verification_failed", "identity_recent_sign_in_required",
+        "password_not_set"
+      ]
+    },
+    "error_allowlist": "go/.golangci.yaml",
+    "error_rules": ".claude/rules/errors.md"
+  },
+  "runner": {
+    "required_tools": ["go", "npx", "git", "heph"],
+    "docker_host": "~/.orbstack/run/docker.sock",
+    "worktree_gomodcache": true,
+    "failed_target_logs": {
+      "failed": "target failed: //([^:\\s]+):([^@\\s]+)(@\\S*)?",
+      "log": ".heph/sandbox/{pkg}/__target_{name}_*/log.txt"
+    },
+    "resume_prefix": ["direnv", "exec", "."],
+    "cache": {
+      "credential_env": "HEPH_CACHE_R2_AWS_ACCESS_KEY_ID",
+      "secret_env": ["HEPH_CACHE_R2_AWS_SECRET_ACCESS_KEY"],
+      "set_env": {"HEPH_PROFILES": "runner"},
+      "missing": "heph runs on this worktree's local cache only — slower, not wrong"
+    },
+    "unattended_note": "this is an unattended run. No command can run outside the sandbox, so do not ask for one; local ports, docker and the Go and npm registries are reachable from inside it. The full gates — `heph run //go:test-all`, `//frontend:test`, `//frontend:lint` — are run by the runner itself at the gate round: in Verify, run `{check} phase` on what you touched and say the full gate was left to the runner. `heph run codegen //...` cannot run here either: after editing a `.proto`, stop, and make the first line of your reply `RUNNER: codegen` — the runner regenerates and starts your run again; never hand-edit generated code. Write files with Edit or Write, never through the shell."
+  },
+  "surfaces": {
+    "go": {
+      "language": "go",
+      "root": "go",
+      "changes": ["go", "protos"],
+      "production": {"include": ["go/**/*.go"], "exclude": ["**/*_test.go", "go/gen/**"]},
+      "tests": {"include": ["go/**/*_test.go"], "exclude": ["go/gen/**"]},
+      "reviewers": {"correctness": "correctness-reviewer", "test": "pipeline:test-reviewer"},
+      "covers": {"correctness": "production Go logic", "test": "Go tests"},
+      "lint": {"include": ["go/**/*.go"], "command": ["golangci-lint", "run", "{package}"], "only_file": true},
+      "format": {
+        "include": ["go/**/*.go"],
+        "exclude": ["go/gen/**"],
+        "tool": "go",
+        "steps": [
+          {"label": "gofmt {file}", "command": ["gofmt", "-w", "{abs}"], "cwd": ".", "timeout": 30},
+          {"label": "go vet {package}", "command": ["go", "vet", "{package}"], "timeout": 120}
+        ]
+      },
+      "phase": [
+        {"name": "build", "command": ["go", "build", "./..."]},
+        {"name": "tidy", "command": ["go", "mod", "tidy", "-diff"]},
+        {"name": "lint", "command": ["golangci-lint", "run", "{packages/...}"]},
+        {"name": "test", "command": ["go", "test", "-count=1", "-v", "{cover}", "{packages}", "{run}"]}
+      ],
+      "full_gates": [{"name": "//go:test-all", "command": ["heph", "run", "//go:test-all"]}],
+      "race": {"scoped_packages": ["services/core/identity", "libs/passwordkit"]}
+    },
+    "frontend": {
+      "language": "ts",
+      "root": "frontend",
+      "changes": ["frontend", "protos", "papi"],
+      "workspaces": ["frontend/packages/*"],
+      "production": {
+        "include": ["frontend/packages/**/src/**/*.ts", "frontend/packages/**/src/**/*.tsx"],
+        "exclude": ["**/*.d.ts", "**/*.test.*", "**/src/test/**", "frontend/packages/genapi/**"]
+      },
+      "tests": {
+        "include": ["frontend/packages/**/*.test.ts", "frontend/packages/**/*.test.tsx",
+                    "frontend/packages/**/*.test.js", "frontend/packages/**/*.test.jsx"]
+      },
+      "reviewers": {"correctness": "ts-correctness-reviewer", "test": "ui-test-reviewer"},
+      "covers": {"correctness": "production TypeScript logic", "test": "frontend tests"},
+      "lint": {"command": ["npx", "--no-install", "eslint", "{surface_file}"], "only_file": false},
+      "format": {
+        "include": ["frontend/**/*.ts", "frontend/**/*.tsx"],
+        "tool": "npx",
+        "steps": [
+          {"label": "prettier {file}", "command": ["npx", "--no-install", "prettier", "--write", "--log-level", "warn", "{abs}"], "timeout": 60}
+        ]
+      },
+      "phase": [
+        {"name": "tsc", "command": ["npx", "tsc", "-b", "--noEmit", "--force"]},
+        {"name": "lint", "command": ["npx", "eslint", "packages/{workspace}"]},
+        {"name": "test", "command": ["npm", "test", "-w", "@content-buddy/{workspace}", "--", "--run", "{filter}"]}
+      ],
+      "test_one": ["npx", "vitest", "run", "{workspace_file}", "-t", "{pattern}"],
+      "test_related": ["npx", "--no-install", "vitest", "related", "{workspace_file}", "--run"],
+      "full_gates": [
+        {"name": "//frontend:test", "command": ["heph", "run", "//frontend:test"]},
+        {"name": "//frontend:lint", "command": ["heph", "run", "//frontend:lint"]}
+      ]
+    }
+  }
+}

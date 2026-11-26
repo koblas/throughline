@@ -1,0 +1,3 @@
+# Bytecode Python writes when one pipeline script imports another (runner.py -> pipeline.py).
+__pycache__/
+*.pyc

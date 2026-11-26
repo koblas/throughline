@@ -1,0 +1,4 @@
+{
+  "name": "pipeline",
+  "description": "Scenario-first TDD agent pipeline: triage, scoping, architect/developer build loop, reviewer gate, unattended runner and retro. Each repo describes its surfaces in .claude/pipeline.json."
+}

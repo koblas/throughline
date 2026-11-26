@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "GOTELEMETRY": "off"
+  },
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "allowLocalBinding": true,
+      "allowUnixSockets": ["~/.orbstack/run/docker.sock"],
+      "allowedDomains": ["proxy.golang.org", "sum.golang.org", "registry.npmjs.org"]
+    },
+    "filesystem": {
+      "denyRead": ["~/"],
+      "allowRead": [
+        ".",
+        "~/Library/Caches/go-build",
+        "~/Library/Caches/golangci-lint",
+        "~/.npm",
+        "~/.gitconfig",
+        "~/.config/git",
+        "~/.docker/config.json"
+      ],
+      "allowWrite": [
+        ".",
+        "~/Library/Caches/go-build",
+        "~/Library/Caches/golangci-lint",
+        "~/.npm"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Read", "Glob", "Grep", "Write", "Edit", "MultiEdit", "LSP",
+      "Bash(go *)", "Bash(gofmt *)", "Bash(golangci-lint *)", "Bash(heph *)", "Bash(buf *)",
+      "Bash(npm test*)", "Bash(npm run *)", "Bash(npm ci*)", "Bash(npx tsc *)", "Bash(npx vitest *)",
+      "Bash(npx eslint *)", "Bash(npx prettier *)",
+      "Bash(git diff *)", "Bash(git status*)", "Bash(git log *)", "Bash(git show *)", "Bash(git rev-parse *)",
+      "Bash(git ls-files *)", "Bash(git checkout -- *)",
+      "Bash(grep *)", "Bash(/usr/bin/grep *)", "Bash(rg *)", "Bash(wc *)", "Bash(ls *)", "Bash(mkdir *)",
+      "Bash(cp *)", "Bash(mv *)", "Bash(mktemp *)",
+      "Bash(plugins/pipeline/scripts/check.py *)", "Bash(plugins/pipeline/scripts/spec-check.py *)", "Bash(plugins/pipeline/scripts/pipeline.py plan-check *)",
+      "Bash(cd *)", "Bash(echo *)", "Bash(head *)", "Bash(tail *)", "Bash(sed -n *)",
+      "Bash(sort *)", "Bash(uniq *)", "Bash(cut *)", "Bash(diff *)", "Bash(git grep *)"
+    ],
+    "deny": [
+      "Bash(git commit*)", "Bash(git push*)", "Bash(gh *)", "Bash(npm publish*)",
+      "Bash(cat >*)", "Bash(cat <<*)", "Bash(tee *)", "Bash(sed -i*)", "Bash(perl -pi*)", "Bash(perl -0pi*)"
+    ]
+  }
+}
