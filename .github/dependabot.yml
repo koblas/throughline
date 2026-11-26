@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      # `ci:` keeps action bumps out of the release notes (hidden section in release-please-config.json).
+      prefix: ci
+      include: scope
+    groups:
+      github-actions:
+        patterns: ["*"]

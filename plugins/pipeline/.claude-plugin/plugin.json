@@ -1,4 +1,11 @@
 {
   "name": "pipeline",
-  "description": "Scenario-first TDD agent pipeline: triage, scoping, architect/developer build loop, reviewer gate, unattended runner and retro. Each repo describes its surfaces in .claude/pipeline.json."
+  "version": "0.1.0",
+  "description": "Scenario-first TDD agent pipeline: triage, scoping, architect/developer build loop, reviewer gate, unattended runner and retro. Each repo describes its surfaces in .claude/pipeline.json.",
+  "author": {
+    "name": "David Koblas"
+  },
+  "homepage": "https://github.com/koblas/throughline",
+  "repository": "https://github.com/koblas/throughline",
+  "license": "MIT"
 }

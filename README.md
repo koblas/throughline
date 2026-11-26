@@ -1,5 +1,9 @@
 # throughline
 
+[![checks](https://github.com/koblas/throughline/actions/workflows/checks.yaml/badge.svg?branch=main)](https://github.com/koblas/throughline/actions/workflows/checks.yaml)
+[![release](https://img.shields.io/github/v/release/koblas/throughline?sort=semver)](https://github.com/koblas/throughline/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Claude Code plugin marketplace carrying **`pipeline`**: a scenario-first TDD agent pipeline —
 triage, scoping, an architect/developer build loop, a reviewer gate, an unattended runner and a retro.
 
@@ -50,13 +54,33 @@ The scripts read their config from the repo they run in, never from beside thems
 
 `plugins/pipeline/tests/fixtures/` holds a full example of both.
 
+## Releases and updates
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please) from the
+[Conventional Commits](https://www.conventionalcommits.org/) on `main`: it keeps a release PR open
+that bumps the `version` in `plugins/pipeline/.claude-plugin/plugin.json` and `version.txt` and adds
+the [CHANGELOG.md](CHANGELOG.md) entry. Merging it tags `v<version>` and publishes the
+[GitHub release](https://github.com/koblas/throughline/releases).
+
+Claude Code uses the plugin's `version` to tell when an installed copy is out of date. To pick up a
+new release:
+
+```
+/plugin marketplace update throughline
+```
+
 ## Development
 
-Requires Python 3.10+. Run the tests from the repo root:
+Requires Python 3.12+. Run the tests from the repo root:
 
 ```
 python3 -m unittest discover -s plugins/pipeline/tests
 ```
 
-Some tests drive `go`, `npx`, `git` and `ps` in scratch repos; they need those on `PATH` and an
-unsandboxed shell. CI runs only the pure-Python checks (`.github/workflows/checks.yaml`).
+Many tests drive `go`, `npx`, `git` and `ps` in scratch repos and need those on `PATH`. CI runs the
+whole suite on Python 3.12–3.15 with Go and Node installed, plus `ruff check` and
+`claude plugin validate .` (`.github/workflows/checks.yaml`). See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)

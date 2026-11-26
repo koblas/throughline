@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in the pipeline plugin does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran (command, agent, hook) and what went wrong. Paste errors verbatim.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps, plus the relevant part of `.claude/pipeline.json` if it matters.
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: The `version` in the installed plugin's `.claude-plugin/plugin.json`.
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+  - type: input
+    id: env
+    attributes:
+      label: OS and Python version
+      placeholder: macOS 15, Python 3.13

@@ -1,8 +1,19 @@
 name: "checks"
 
-# The unit tests of the pipeline's pure-Python checks, on every pull request and push to main.
-# The rest of plugins/pipeline/tests drives Go, npx and git in scratch repos and needs that
-# toolchain on PATH; run it locally:  python3 -m unittest discover -s plugins/pipeline/tests
+# Every pull request and push to main:
+#
+# - manifests: the marketplace, plugin and hooks manifests parse, `claude plugin validate .`
+#   passes, and plugin.json's "version" matches version.txt (release-please bumps both).
+# - lint: ruff with the repo's ruff.toml (bug-finding rules only; no formatter is enforced).
+# - test: the full unittest suite on every supported Python. Many tests drive real `go`,
+#   `npx`, `git` and `ps` in scratch repos, so Go and Node are installed and git gets an
+#   identity. Eight tests skip here; CONTRIBUTING.md lists them and why:
+#     - test_runner_status.DetachedTest (5): needs `heph`, content_buddy's build tool, which the
+#       fixture repo's required_tools names and which CI does not install.
+#     - test_check_phase AllowlistGrowthTest / ReasonParityTest and test_pipeline_config
+#       ValidationTest (3): check the plugin against its host repo's own config, so they skip in
+#       this standalone repo (they skip locally too).
+#   The code needs Python 3.12+ (f-string syntax), so 3.10 and 3.11 are not in the matrix.
 
 on:
   pull_request:
@@ -12,21 +23,80 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  checks:
+  manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
         with:
-          python-version: "3.12"
-      - name: Marketplace and plugin manifests parse
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Manifests parse
         run: |
           python3 -m json.tool .claude-plugin/marketplace.json > /dev/null
           python3 -m json.tool plugins/pipeline/.claude-plugin/plugin.json > /dev/null
           python3 -m json.tool plugins/pipeline/hooks/hooks.json > /dev/null
-      - name: Unit tests of the pure-Python checks
+          python3 -m json.tool release-please-config.json > /dev/null
+          python3 -m json.tool .release-please-manifest.json > /dev/null
+      - name: plugin.json version matches version.txt
         run: |
-          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_not_built.py'
-          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_spec_check.py'
-          python3 -m unittest discover -s plugins/pipeline/tests -p 'test_diff_coverage.py'
+          plugin=$(python3 -c 'import json; print(json.load(open("plugins/pipeline/.claude-plugin/plugin.json"))["version"])')
+          file=$(tr -d '[:space:]' < version.txt)
+          if [ "$plugin" != "$file" ]; then
+            echo "::error file=plugins/pipeline/.claude-plugin/plugin.json::version $plugin does not match version.txt ($file)"
+            exit 1
+          fi
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: claude plugin validate
+        run: |
+          claude plugin validate .
+          claude plugin validate plugins/pipeline
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/ruff-action@v4
+        with:
+          version: "0.17.5"
+          args: check --output-format=github
+
+  test:
+    name: test (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Git identity for the scratch repos the tests create
+        run: |
+          git config --global user.name "throughline-ci"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global init.defaultBranch main
+      - name: Unit tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -v -s plugins/pipeline/tests
