@@ -1,0 +1,39 @@
+name: "release-please"
+
+# Cuts releases from the Conventional Commits on main. Every push to main updates one open
+# release PR that bumps .release-please-manifest.json, version.txt and the "version" in
+# plugins/pipeline/.claude-plugin/plugin.json, and prepends the new CHANGELOG.md entry.
+# Merging that PR tags v<version> and creates its GitHub release, whose notes are the
+# changelog entry. Users pick the new version up with `/plugin marketplace update throughline`.
+#
+# Config: release-please-config.json (one root component, `simple` release type;
+# refactor/chore/build/test/ci/docs/style are hidden from the notes).
+#
+# release-please signs in with GITHUB_TOKEN, so its PR starts no other workflow (checks do
+# not run on the release PR). The repository must allow GitHub Actions to create pull
+# requests (Settings > Actions > General > Workflow permissions).
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
