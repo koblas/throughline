@@ -1,0 +1,25 @@
+{
+  "description": "The issue labels every repo starts with. `kinds` says which repos get each label: a product repo runs the pipeline (all three lanes), an infrastructure repo runs the Direct lane only and tracks its debt in issues. `scripts/new-repo.py labels` creates them; `area:<name>` labels are not here because each one belongs to a product-spec file (`docs/product/<name>.md`) and is created with it.",
+  "labels": [
+    {"name": "feature", "color": "0e8a16", "kinds": ["product"],
+     "description": "Adopted, user-visible. Parent of its scenario sub-issues."},
+    {"name": "scenario", "color": "bfdadc", "kinds": ["product"],
+     "description": "One action from a feature spec. Closed by the PR that ticks it."},
+    {"name": "bug", "color": "d73a4a", "kinds": ["product"],
+     "description": "Behaviour that contradicts the product spec."},
+    {"name": "lane:full", "color": "5319e7", "kinds": ["product"],
+     "description": "Triage lane: all seven stages."},
+    {"name": "lane:light", "color": "d4c5f9", "kinds": ["product"],
+     "description": "Triage lane: short spec, one package, no new surface."},
+    {"name": "lane:direct", "color": "ededed", "kinds": ["product"],
+     "description": "Triage lane: capture, build, review."},
+    {"name": "debt", "color": "fbca04", "kinds": ["product", "infrastructure"],
+     "description": "Knowingly left undone or done poorly. States what, why, and the trigger to pay it."},
+    {"name": "decision", "color": "d876e3", "kinds": ["product", "infrastructure"],
+     "description": "A question only the owner can answer. Closed by a Decisions entry."},
+    {"name": "idea", "color": "c5def5", "kinds": ["product", "infrastructure"],
+     "description": "Not adopted. Body: where it came from, what would make it worth doing."},
+    {"name": "security", "color": "b60205", "kinds": ["product", "infrastructure"],
+     "description": "A finding from a security review."}
+  ]
+}
