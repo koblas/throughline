@@ -17,10 +17,13 @@ plugins/pipeline/                 the plugin
   .claude-plugin/plugin.json
   agents/      the pipeline's own agents (spawned as pipeline:<name>)
   briefs/      workflow, orchestration, build, review, proof … rules the agents read
-  commands/    /pipeline:run-feature, /pipeline:run-reviewers, /pipeline:intent-and-goal, /pipeline:new-reviewer
+  commands/    /pipeline:run-feature, /pipeline:run-reviewers, /pipeline:intent-and-goal, /pipeline:new-reviewer,
+               /pipeline:new-repo
   hooks/       SessionStart context, the acceptance-test lock, per-edit checks
-  scripts/     pipeline.py (the conductor), runner.py (unattended runs), check.py, spec-check.py, …
+  scripts/     pipeline.py (the conductor), runner.py (unattended runs), check.py, spec-check.py, new-repo.py, …
   skills/      tdd, adr, api-conventions, legacy-code
+  templates/   new-repo/: the files /pipeline:new-repo writes into a new repo
+  labels.json  the standard issue labels, per kind of repo (product, infrastructure)
   tests/       unittest suite for the scripts
 ```
 
@@ -53,6 +56,15 @@ The scripts read their config from the repo they run in, never from beside thems
 - `.claude/runner-settings.json` — the unattended runner's permission profile.
 
 `plugins/pipeline/tests/fixtures/` holds a full example of both.
+
+## Starting a new repo
+
+`/pipeline:new-repo`, run in the new repo, sets up the baseline it starts from: the plugin enabled
+in `.claude/settings.json`, a short `CLAUDE.md`, `SECURITY.md`, a CI workflow running the repo's
+verify commands, and the labels in `plugins/pipeline/labels.json`. A **product** repo also gets
+`.claude/pipeline.json` (its surfaces) and `docs/product/README.md`; an **infrastructure** repo
+runs the Direct lane only, with issues for debt, and gets no `.claude/pipeline.json`. It shows
+every file and label before writing and never replaces an existing file without asking.
 
 ## Releases and updates
 

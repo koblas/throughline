@@ -1,0 +1,24 @@
+name: checks
+
+# Every pull request and push to main runs the repo's verify commands — the same ones
+# CLAUDE.md → Verify lists. Add toolchain setup steps above "Verify" as the repo needs them.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+{{setup}}      - name: Verify
+        run: |
+          set -euo pipefail
+{{verify_run}}
