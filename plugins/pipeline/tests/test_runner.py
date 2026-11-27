@@ -76,7 +76,7 @@ class RunnerTest(tp.Feature):
         self.slept = []
         r.sleep = self.slept.append
         r.check_env = lambda: None
-        r.heph = self.fake_heph
+        r.run_gate = self.fake_heph
         r.run_command = self.fake_command
         return r
 
@@ -358,12 +358,12 @@ class RunnerTest(tp.Feature):
         credential = rn.runner_settings(self.root)["cache"]["credential_env"]
         with mock.patch.dict(os.environ, {credential: "key"}):
             os.environ.pop("HEPH_PROFILES", None)
-            r.heph_profile()
+            r.cache_env()
             self.assertEqual(os.environ.get("HEPH_PROFILES"), "runner")
         with mock.patch.dict(os.environ, {}):
             os.environ.pop(credential, None)
             os.environ.pop("HEPH_PROFILES", None)
-            r.heph_profile()
+            r.cache_env()
             self.assertNotIn("HEPH_PROFILES", os.environ)
         self.assertTrue(any("local cache" in line for line in self.said))
 

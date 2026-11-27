@@ -7,12 +7,8 @@ name: "checks"
 # - lint: ruff with the repo's ruff.toml (bug-finding rules only; no formatter is enforced).
 # - test: the full unittest suite on every supported Python. Many tests drive real `go`,
 #   `npx`, `git` and `ps` in scratch repos, so Go and Node are installed and git gets an
-#   identity. Eight tests skip here; CONTRIBUTING.md lists them and why:
-#     - test_runner_status.DetachedTest (5): needs `heph`, content_buddy's build tool, which the
-#       fixture repo's required_tools names and which CI does not install.
-#     - test_check_phase AllowlistGrowthTest / ReasonParityTest and test_pipeline_config
-#       ValidationTest (3): check the plugin against its host repo's own config, so they skip in
-#       this standalone repo (they skip locally too).
+#   identity. Five tests skip here (test_runner_status.DetachedTest, which needs `heph`,
+#   content_buddy's build tool); CONTRIBUTING.md says why.
 #   The code needs Python 3.12+ (f-string syntax), so 3.10 and 3.11 are not in the matrix.
 
 on:

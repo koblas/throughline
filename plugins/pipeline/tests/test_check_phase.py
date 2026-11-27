@@ -253,151 +253,6 @@ class AbsenceOnlyPhaseTest(unittest.TestCase):
         self.assertEqual(["Test_a_stranger_gets_no_event"], [f.split("` `")[1].split("`")[0] for f in found])
 
 
-PROTO = """message Error {
-  // reason, when set, is one of:
-  //   - "account_membership_none" — the caller has no membership.
-  //   - "mfa_setup_expired" — the pending setup window passed.
-  string reason = 4;
-}
-"""
-UNION = """export type ErrorReason =
-  | "account_membership_none"
-  | "mfa_setup_expired"
-  | (string & {});
-"""
-
-
-class ReasonParityTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name).resolve()
-        (self.root / "protos/api/v1").mkdir(parents=True)
-        (self.root / "frontend/packages/shared/src").mkdir(parents=True)
-        repo_fixture.install(self.root, profile=False)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def write(self, proto: str, union: str) -> None:
-        (self.root / "protos/api/v1/error.proto").write_text(proto)
-        (self.root / "frontend/packages/shared/src/errors.ts").write_text(union)
-
-    def test_the_same_reasons_on_both_sides_pass(self):
-        self.write(PROTO, UNION)
-        self.assertEqual([], check.reason_parity(self.root))
-
-    def test_a_documented_reason_missing_from_the_union_is_reported(self):
-        self.write(PROTO.replace('  string reason', '  //   - "account_invitation_pending" — pending.\n  string reason'), UNION)
-        found = check.reason_parity(self.root)
-        self.assertEqual(1, len(found))
-        self.assertIn("`account_invitation_pending` is documented on api.v1.Error.reason but missing", found[0])
-
-    def test_a_union_reason_missing_from_the_proto_doc_is_reported(self):
-        self.write(PROTO, UNION.replace('  | (string', '  | "account_invitation_pending"\n  | (string'))
-        found = check.reason_parity(self.root)
-        self.assertEqual(1, len(found))
-        self.assertIn("`account_invitation_pending` is in ErrorReason but not documented", found[0])
-
-    def test_a_reason_in_the_ratchet_is_not_reported(self):
-        self.write(PROTO, UNION.replace('  | (string', '  | "password_not_set"\n  | (string'))
-        self.assertEqual([], check.reason_parity(self.root))
-
-    def test_the_real_tree_has_no_drift_beyond_the_ratchet(self):
-        root = Path(__file__).resolve().parents[3]
-        if not (root / ".claude" / "pipeline.json").is_file():
-            self.skipTest("the plugin is not inside a repo with a pipeline config (standalone checkout)")
-        self.assertEqual([], check.reason_parity(root))
-
-
-LINT = """linters:
-  exclusions:
-    rules:
-      # error-allowlist: begin
-      - linters:
-          - forbidigo
-        path: ^services/core/account/
-      - linters:
-          - forbidigo
-        path: ^services/core/user/
-      # error-allowlist: end
-      - linters:
-          - lll
-        path: ^elsewhere/
-"""
-LINT_GROWN = LINT.replace("      # error-allowlist: end",
-                          "      - linters:\n          - forbidigo\n        path: ^services/core/todo/\n"
-                          "      # error-allowlist: end")
-
-
-class AllowlistGrowthTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name).resolve()
-        git(self.root, "init", "-q")
-        git(self.root, "config", "user.email", "t@example.com")
-        git(self.root, "config", "user.name", "t")
-        (self.root / "go").mkdir()
-        repo_fixture.install(self.root, profile=False)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def growth(self, before: str | None, after: str) -> list[str]:
-        (self.root / "README").write_text("x")
-        if before is not None:
-            (self.root / "go/.golangci.yaml").write_text(before)
-        git(self.root, "add", "-A")
-        git(self.root, "commit", "-q", "-m", "base")
-        (self.root / "go/.golangci.yaml").write_text(after)
-        (self.root / "README").write_text("y")
-        git(self.root, "add", "-A")
-        git(self.root, "commit", "-q", "-m", "to")
-        return check.allowlist_growth(self.root, "HEAD~1", "HEAD")
-
-    def test_an_added_entry_is_reported_by_name(self):
-        found = self.growth(LINT, LINT_GROWN)
-        self.assertEqual(1, len(found))
-        self.assertIn("`^services/core/todo/` was added to the error allowlist", found[0])
-
-    def test_a_removed_entry_passes(self):
-        self.assertEqual([], self.growth(LINT_GROWN, LINT))
-
-    def test_an_unchanged_list_passes(self):
-        self.assertEqual([], self.growth(LINT, LINT + "# trailing\n"))
-
-    def test_an_unrelated_exclusion_outside_the_markers_is_not_this_check(self):
-        self.assertEqual([], self.growth(LINT, LINT + "      - path: ^other/\n"))
-
-    def test_an_error_rule_exclusion_outside_the_markers_is_reported(self):
-        found = self.growth(LINT, LINT + '      - text: "error rule:"\n        path: ^services/core/todo/\n')
-        self.assertEqual(1, len(found))
-        self.assertIn("outside the `# error-allowlist` markers", found[0])
-
-    def test_removing_the_markers_is_reported(self):
-        found = self.growth(LINT, LINT.replace("      # error-allowlist: begin\n", ""))
-        self.assertEqual(1, len(found))
-        self.assertIn("markers are gone", found[0])
-
-    def test_a_broadened_entry_is_reported_as_an_addition(self):
-        found = self.growth(LINT, LINT.replace("^services/core/user/", "^services/core/"))
-        self.assertEqual(1, len(found))
-        self.assertIn("`^services/core/` was added", found[0])
-
-    def test_the_change_that_introduces_the_list_passes(self):
-        self.assertEqual([], self.growth(None, LINT))
-
-    def test_a_base_without_the_markers_passes(self):
-        self.assertEqual([], self.growth("linters: {}\n", LINT))
-
-    def test_the_real_list_leaves_the_migrated_packages_out(self):
-        root = Path(__file__).resolve().parents[3]
-        if not (root / "go/.golangci.yaml").is_file():
-            self.skipTest("the plugin is not inside a repo with a go/.golangci.yaml (standalone checkout)")
-        entries = check.error_allowlist((root / "go/.golangci.yaml").read_text())
-        self.assertEqual([], [e for e in entries if "todo" in e])
-        self.assertEqual([], check.allowlist_growth(root, "HEAD", "HEAD"))
-
-
 class CoverageVerdictTest(unittest.TestCase):
     """A Go test step that wrote no coverage profile is a failure, never `coverage: ok`."""
 
@@ -525,6 +380,29 @@ class TsCoverageTest(unittest.TestCase):
 
         self.assertFalse([a for a in cmd if a.startswith("--coverage")], cmd)
         self.assertIn("sign.test", cmd)
+
+
+class RepoPhaseStepTest(unittest.TestCase):
+    """A repo's own check is a step of its surface's `phase` list, reading the same diff as the plugin's."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        config = repo_fixture.content_buddy()
+        config["surfaces"]["go"]["phase"].append(
+            {"name": "allowlist", "command": [".claude/scripts/allowlist.py", "--base", "{base}", "--to", "{to}"],
+             "cwd": "."})
+        repo_fixture.install(self.root, config, profile=False)
+
+    def test_base_and_to_reach_a_repo_step(self):
+        args = argparse.Namespace(go=["./a/"], ts=None, filter=None, run=None)
+
+        checks = check.phase_checks(self.root, args, self.root / "cover.out", self.root / "ts", "abc123", "def456")
+
+        step = next((cmd, cwd) for name, cmd, cwd, _ in checks if name == "allowlist")
+        self.assertEqual(step, ([".claude/scripts/allowlist.py", "--base", "abc123", "--to", "def456"], self.root))
 
 
 class PhaseArgsTest(unittest.TestCase):

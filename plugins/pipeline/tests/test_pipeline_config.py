@@ -70,6 +70,14 @@ class ValidationTest(unittest.TestCase):
         self.assertIn("`surfaces.go.lint.command` is missing", why)
         self.assertIn(str(self.root / ".claude" / "pipeline.json"), why)
 
+    def test_a_check_the_plugin_no_longer_ships_is_refused_with_its_replacement(self):
+        for key in ("reason_parity", "error_allowlist", "error_rules"):
+            with self.subTest(key=key):
+                why = self.refusal(repo_fixture.content_buddy() | {"checks": {key: "go/.golangci.yaml"}})
+
+                self.assertIn(f"`checks.{key}` is no longer read", why)
+                self.assertIn("`phase` list, with `{base}` and `{to}`", why)
+
     def test_a_briefs_entry_that_is_not_a_list_of_names_is_refused(self):
         config = repo_fixture.content_buddy() | {"briefs": {"architect": "navigation.md"}}
 
@@ -165,13 +173,8 @@ class ValidationTest(unittest.TestCase):
 
         self.assertIn(f"no pipeline config at {self.root / '.claude' / 'pipeline.json'}", str(caught.exception))
 
-    def test_the_fixture_and_the_repos_own_config_are_the_same_and_valid(self):
-        # The plugin's source repo (content_buddy) carries plugins/pipeline/scripts and .claude/pipeline.json.
-        own = SCRIPTS.parents[2] / ".claude" / "pipeline.json"
-        if not own.is_file():
-            self.skipTest("the plugin is not inside its source repo (installed copy)")
-        self.assertEqual(json.loads(own.read_text()), repo_fixture.content_buddy())
-        pc.validate(own, json.loads(own.read_text()))
+    def test_the_fixture_config_is_valid(self):
+        pc.validate(repo_fixture.CONFIG, repo_fixture.content_buddy())
 
 
 class ExemplarTest(unittest.TestCase):

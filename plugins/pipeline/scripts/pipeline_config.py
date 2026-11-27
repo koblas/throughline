@@ -353,6 +353,12 @@ def validate(path: Path, raw) -> None:
     for key in ("security_paths", "build_definitions"):  # required; "" says "none" explicitly
         _need(path, raw, key, "regex", "")
     _need(path, raw, "test_support_paths", "regex", "", optional=True)
+    # Checks the plugin once ran for one repo by name are a repo's own phase steps now: say so, never drop them.
+    for gone in ("reason_parity", "error_allowlist", "error_rules"):
+        if gone in (raw.get("checks") or {}):
+            _fail(path, f"checks.{gone}", "is no longer read: the plugin no longer ships this check. Run the "
+                  "repo's own script as a step of the surface's `phase` list, with `{base}` and `{to}` for the "
+                  "diff (`check.py` → *phase*), and remove the key")
     for agent in (_need(path, raw, "briefs", dict, "", optional=True) or {}):
         _need(path, raw["briefs"], agent, "str_list", "briefs")
     if (runner := _need(path, raw, "runner", dict, "", optional=True)) is not None:
