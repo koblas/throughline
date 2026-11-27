@@ -23,6 +23,12 @@ the rules that still apply (the lanes, the testing rule) with a note in place of
 `runner.py` and `pipeline.py next` refuse to run, and `pass_conditions` and `feature_budget_usd`, which
 only those two read, may be left out. Everything that reads `surfaces` works the same in either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
 
+`briefs` (optional): agent name → the briefs it reads besides its standard ones, plugin briefs
+(`proof.md`) or the repo's own (`.claude/briefs/storage.md`): `{"correctness-reviewer": ["proof.md",
+"storage.md"], "architect": ["navigation.md"]}`. The bare name: `test-reviewer`, not
+`pipeline:test-reviewer`. An agent with no entry reads none, except a surface's test reviewer, which
+reads `proof.md`. The plugin names no repo agent itself.
+
 `runner.file_issues` (optional, default false): `true` lets `runner.py` file a finished feature's
 issue drafts itself at DONE (`gh issue create`, through `pipeline.py file-issues --yes`). The setting is
 the user's yes for every unattended run in the repo; without it the drafts wait for a person.
@@ -254,6 +260,7 @@ class Config:
         self.copy_sources: dict = raw.get("copy_sources", {})
         self.checks: dict = raw.get("checks", {})
         self.runner: dict = raw.get("runner", {})
+        self.briefs: dict[str, list[str]] = raw.get("briefs", {})  # agent name → the extra briefs it reads
         self.mode: str = raw.get("mode", MODES[0])
 
     @property
@@ -346,6 +353,14 @@ def validate(path: Path, raw) -> None:
     for key in ("security_paths", "build_definitions"):  # required; "" says "none" explicitly
         _need(path, raw, key, "regex", "")
     _need(path, raw, "test_support_paths", "regex", "", optional=True)
+    # Checks the plugin once ran for one repo by name are a repo's own phase steps now: say so, never drop them.
+    for gone in ("reason_parity", "error_allowlist", "error_rules"):
+        if gone in (raw.get("checks") or {}):
+            _fail(path, f"checks.{gone}", "is no longer read: the plugin no longer ships this check. Run the "
+                  "repo's own script as a step of the surface's `phase` list, with `{base}` and `{to}` for the "
+                  "diff (`check.py` → *phase*), and remove the key")
+    for agent in (_need(path, raw, "briefs", dict, "", optional=True) or {}):
+        _need(path, raw["briefs"], agent, "str_list", "briefs")
     if (runner := _need(path, raw, "runner", dict, "", optional=True)) is not None:
         _need(path, runner, "file_issues", bool, "runner", optional=True)
     for key in ("generated_roots", "top_dirs"):

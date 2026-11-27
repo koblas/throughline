@@ -29,13 +29,9 @@ Three modes:
          `testing/synctest` bubble (a real sleep is a flake with a timer; inside a bubble it is the
          idiom), absence-only tests, `go test` on the packages.
          TS: `tsc -b --noEmit`, eslint on the workspace, absence-only tests, vitest on the workspace.
-         Both, when the repo config sets `checks.reason_parity`: the wire reasons documented on
-         `api.v1.Error.reason` in its `proto` file and the TS `ErrorReason` union in its `union`
-         file name the same set (less its `drift`, the pairs that already differed when the check
-         was added).
-         Go, when the repo config sets `checks.error_allowlist`: the error allowlist between the
-         `# error-allowlist` markers of that golangci config gained no entry since the base — it
-         only shrinks (the repo's `checks.error_rules`, when it names one).
+         Then the surface's own `phase` steps from .claude/pipeline.json, in order: a repo's own
+         checks (a ratchet, a parity check between two files) are steps there, and `{base}` and
+         `{to}` give a step the same base and working-tree snapshot as the diff checks above.
          "Changed" means against the pending run's base (`scenario_base`): the scenario's
          pre-snapshot for a build run or a checkpoint fix, the pre-fix snapshot for a gate fix,
          else HEAD. Absence-only: `scripts/absence-only.py` on the tests changed since that base;
@@ -455,92 +451,6 @@ def absence_only(root: Path, frontend: bool, base: str | None = None, to: str | 
             if (m := ABSENCE_LINE_RE.match(line)) and (m.group(1), m.group(2)) not in locked]
 
 
-# The repo config's `checks.reason_parity`: the proto file documenting `api.v1.Error.reason`, the TS file
-# holding the `ErrorReason` union, and `drift` — reasons on one side only when the parity check was added
-# (2026-10-10). A ratchet: document the reason on the other side and delete it there; never add one.
-
-
-def proto_reasons(text: str) -> set[str]:
-    """The `- "reason"` entries of the comment block directly above `string reason` in api.v1.Error."""
-    lines = text.splitlines()
-    at = next((i for i, l in enumerate(lines) if l.strip().startswith("string reason")), None)
-    if at is None:
-        return set()
-    start = at
-    while start > 0 and lines[start - 1].strip().startswith("//"):
-        start -= 1
-    return set(re.findall(r'//\s+-\s+"([a-z_]+)"', "\n".join(lines[start:at])))
-
-
-def union_reasons(text: str) -> set[str]:
-    """The string members of `export type ErrorReason = …;`."""
-    at = text.find("export type ErrorReason")
-    return set(re.findall(r'"([a-z_]+)"', text[at:text.find(";", at)])) if at >= 0 else set()
-
-
-def reason_parity(root: Path) -> list[str]:
-    """A wire reason documented in the proto but absent from the TS union, or the reverse (the config's
-    `checks.reason_parity`; nothing to check without it)."""
-    parity = pc.load(root).checks.get("reason_parity")
-    if not parity:
-        return []
-    proto, union = root / parity["proto"], root / parity["union"]
-    if not proto.is_file() or not union.is_file():
-        return []
-    drift = set(parity.get("drift") or [])
-    p, t = proto_reasons(proto.read_text()), union_reasons(union.read_text())
-    out = [f"{proto.relative_to(root)}: `{r}` is documented on api.v1.Error.reason but missing from "
-           f"ErrorReason in {union.relative_to(root)}" for r in sorted(p - t - drift)]
-    out += [f"{union.relative_to(root)}: `{r}` is in ErrorReason but not documented on api.v1.Error.reason "
-            f"in {proto.relative_to(root)}" for r in sorted(t - p - drift)]
-    return out
-
-
-# The repo config's `checks.error_allowlist`: the golangci config holding the error allowlist.
-ERROR_ALLOWLIST_RE = re.compile(r"# error-allowlist: begin\n(.*?)# error-allowlist: end", re.S)
-
-
-def error_allowlist(text: str) -> set[str]:
-    """The `path:` entries between the `# error-allowlist` markers of a golangci config."""
-    block = ERROR_ALLOWLIST_RE.search(text)
-    return set(re.findall(r"^\s*path:\s*(\S+)\s*$", block.group(1), re.M)) if block else set()
-
-
-def allowlist_growth(root: Path, base: str | None = None, to: str | None = None) -> list[str]:
-    """Ways the error allowlist in `to` is weaker than in `base`: the list only shrinks.
-
-    Reports a `path:` entry `base` lacks, the markers or the config gone, and a forbidigo
-    exclusion for the error rule placed outside the markers. A base with no config, or one
-    with no markers, is the change that introduces the list. It does not judge the `forbid:`
-    patterns themselves or a `//nolint:forbidigo`: those are a reviewer's.
-    """
-    checks = pc.load(root).checks
-    allowlist = checks.get("error_allowlist")
-    if not allowlist:
-        return []
-    cite = f" (`{checks['error_rules']}`)" if checks.get("error_rules") else ""  # the repo's rule, when it has one
-    base, to = base or scenario_base(root), to or snapshot(root)
-
-    def at(ref: str) -> str | None:
-        out = subprocess.run(["git", "show", f"{ref}:{allowlist}"], cwd=root, capture_output=True, text=True)
-        return out.stdout if out.returncode == 0 else None
-
-    def outside(text: str) -> int:
-        return ERROR_ALLOWLIST_RE.sub("", text).count('text: "error rule:"')
-
-    before, after = at(base), at(to)
-    if before is None or not ERROR_ALLOWLIST_RE.search(before):
-        return []
-    if after is None or not ERROR_ALLOWLIST_RE.search(after):
-        return [f"{allowlist}: the `# error-allowlist` markers are gone; the ratchet needs them{cite}"]
-    found = [f"{allowlist}: `{entry}` was added to the error allowlist; the list only shrinks{cite}"
-             for entry in sorted(error_allowlist(after) - error_allowlist(before))]
-    if outside(after) > outside(before):
-        found.append(f"{allowlist}: a forbidigo exclusion for the error rule was added outside the "
-                     f"`# error-allowlist` markers{cite}")
-    return found
-
-
 def _diff_coverage_module():
     loader = importlib.util.spec_from_file_location("diff_coverage", Path(__file__).resolve().parent / "diff-coverage.py")
     dc = importlib.util.module_from_spec(loader)
@@ -599,11 +509,13 @@ def phase(args: argparse.Namespace) -> int:
         return _phase(args, Path(tmp) / "cover.out", Path(tmp) / "ts-cover")
 
 
-def phase_checks(root: Path, args: argparse.Namespace, profile: Path,
-                 ts_report: Path | None = None) -> list[tuple[str, list[str], Path, str]]:
+def phase_checks(root: Path, args: argparse.Namespace, profile: Path, ts_report: Path | None = None,
+                 base: str | None = None, to: str | None = None) -> list[tuple[str, list[str], Path, str]]:
     """(name, command, cwd, language) for each `phase` step of the config's first `go` surface (with --go)
     and first `ts` surface (with --ts), its placeholders filled from the arguments. `{cover}` writes the
-    Go profile to `profile` and the TS istanbul json into `ts_report`; a --run / --filter leaves it empty."""
+    Go profile to `profile` and the TS istanbul json into `ts_report`; a --run / --filter leaves it empty.
+    `{base}` and `{to}` are the revision "changed" is judged against and the working tree's snapshot, so
+    a repo's own diff check (a ratchet, say) reads the same change as the plugin's."""
     ts_report = ts_report or profile.parent / "ts-cover"
     config = pc.load(root)
     checks: list[tuple[str, list[str], Path, str]] = []
@@ -621,6 +533,7 @@ def phase_checks(root: Path, args: argparse.Namespace, profile: Path,
             values = {"packages": args.go, "packages/...": [p.rstrip("/") + "/..." for p in args.go],
                       "cover": [] if args.run else _diff_coverage_module().cover_flags(args.go, profile),
                       "run": ["-run", args.run] if args.run else []}
+        values |= {k: v for k, v in (("base", base), ("to", to)) if v}
         checks += [(step["name"], pc.expand(step["command"], **values), root / step.get("cwd", surface.root), language)
                    for step in surface.phase]
     return checks
@@ -631,20 +544,18 @@ def _phase(args: argparse.Namespace, profile: Path, ts_report: Path) -> int:
     if not args.go and not args.ts:
         print("check phase: pass --go and/or --ts", file=sys.stderr)
         return 2
+    # One base and one snapshot for every check that reads the diff, so they judge the same change.
+    base, to = args.base or scenario_base(root), snapshot(root)
     try:
-        checks = phase_checks(root, args, profile, ts_report)
+        checks = phase_checks(root, args, profile, ts_report, base, to)
     except pc.ConfigError as why:
         print(f"check phase: {why}", file=sys.stderr)
         return 2
     failed = False
-    # One base and one snapshot for every check that reads the diff, so they judge the same change.
-    base, to = args.base or scenario_base(root), snapshot(root)
     diff_checks = [("doc", doc_budget(root, args.go, base, to)), ("sleep", real_sleeps(root, args.go, base, to)),
                    ("layout", test_layout(root, args.go, base, to)),
                    ("absence", absence_only(root, False, base, to))] if args.go else []
     diff_checks += [("absence-ts", absence_only(root, True, base, to))] if args.ts else []
-    diff_checks += [("reasons", reason_parity(root))] if args.go or args.ts else []
-    diff_checks += [("allowlist", allowlist_growth(root, base, to))] if args.go else []
     for name, found in diff_checks:
         if found and name.startswith("absence"):
             failed = True

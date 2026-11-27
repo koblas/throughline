@@ -98,14 +98,10 @@ PLAN_TEST_RE = re.compile(r"^`[^`]+\.(?:go|tsx?|jsx?)`\s+`[^`]+`")
 MAX_BUILD_BATCHES = 5
 MAX_PLAN_LINES = 120  # the cap is "about 100"; the check fails only well past it
 TEST_FILE_RE = re.compile(r"(_test\.go|\.test\.[jt]sx?)$")  # plus the config's `test_support_paths`
-# Briefs each reviewer reads besides review.md, by role (`briefs/core.md` table); the repo's own
-# (`storage.md`, `navigation.md`) are named only when the repo has them (`cfg.briefs`).
-EXTRA_BRIEFS = {
-    "test-reviewer": ["proof.md", "storage.md"],
-    "ui-test-reviewer": ["proof.md"],
-    "correctness-reviewer": ["proof.md", "storage.md", "navigation.md"],
-    "arch-reviewer": ["navigation.md"],
-}
+# The brief every surface's test reviewer reads besides review.md when the repo's config names none for it.
+# Which other briefs an agent reads (the repo's `storage.md`, `navigation.md` and the like) is the config's
+# `briefs` map, keyed by agent name: the plugin knows no repo agent by name (`extra_briefs`).
+TEST_REVIEWER_BRIEFS = ["proof.md"]
 CHECKPOINT_MUTANTS = "8"
 # The gate is two questions: does the code do what the spec says (a correctness reviewer), and do the
 # tests prove the cases (a test reviewer), each picked by surface in the repo's config
@@ -286,6 +282,16 @@ def agent_file(root: Path, name: str) -> Path | None:
     else:
         homes = [h for h in reversed(agent_homes(root)) if h.resolve() != OWN_AGENTS.resolve()]
     return next((f for h in homes for f in (h / f"{stem}.md", h / stem / "Agent.md") if f.is_file()), None)
+
+
+def extra_briefs(c, name: str) -> list[str]:
+    """The briefs `name` reads besides its standard ones: the config's `briefs` entry for it (by its bare
+    name: `test-reviewer` for `pipeline:test-reviewer`), else `proof.md` for a surface's test reviewer, else
+    none. A brief that exists in neither the plugin nor the repo is left out when the list is used."""
+    role = cfg.role_of(name)
+    if role in c.briefs:
+        return list(c.briefs[role])
+    return list(TEST_REVIEWER_BRIEFS) if any(cfg.role_of(s.test_reviewer) == role for s in c.surfaces) else []
 
 
 def reviewers(root: Path) -> dict[str, list[re.Pattern]]:
@@ -616,7 +622,7 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
 
     def body(name: str, scope: list[str]) -> str:
         briefs = ", ".join(f"`{b}`" for b in [*cfg.standing_briefs(root), *cfg.briefs(
-            ["review.md", *EXTRA_BRIEFS.get(cfg.role_of(name), [])], root)])
+            ["review.md", *extra_briefs(c, name)], root)])
         lines = [
             f"# {unit} — `{slug}`",
             "",
@@ -2369,7 +2375,7 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
                 f"- Sizing threshold: {state['p90']}.",
                 *([f"- This plan also delivers {', '.join(folded)}: carry their steps, acceptance tests and "
                    "every one of their cases."] if folded else []),
-                "- Briefs: " + ", ".join(f"`{b}`" for b in cfg.briefs(["build.md", "planning.md", "navigation.md"], root)) + ".",
+                "- Briefs: " + ", ".join(f"`{b}`" for b in cfg.briefs(["build.md", "planning.md", *extra_briefs(config(root), "architect")], root)) + ".",
                 "- Anchor every file with a line range.",
             ]
             spawn(state, "plan", unit, tag, ["architect"], [emit(work, tag, "architect", "\n".join(body) + "\n")])

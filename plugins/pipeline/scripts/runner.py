@@ -738,7 +738,7 @@ class Runner:
                           "this worktree's own module cache. Start the runner from this worktree's dev shell "
                           f"(`{self.start_hint()}`)")
 
-    def heph_profile(self) -> None:
+    def cache_env(self) -> None:
         """Read the shared build cache when there are credentials for it (the config's `runner.cache`);
         never write it."""
         cache = runner_settings(self.root).get("cache") or {}
@@ -1004,7 +1004,7 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
         self.say(f"  {name}: {'ok' if out.returncode == 0 else 'FAILED'}, {round(time.time() - started)}s")
         return ["--ran", f"`{' '.join(command)}` was run for you. Result: {result}"]
 
-    def heph(self, gate: dict) -> subprocess.CompletedProcess:
+    def run_gate(self, gate: dict) -> subprocess.CompletedProcess:
         """Run one full gate (`{name, command}` from the config)."""
         return tracked(list(gate["command"]), self.root, GATE_TIMEOUT)
 
@@ -1030,13 +1030,13 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
             if key not in done:
                 self.say(f"full gate: {shown}")
                 started = time.time()
-                out = self.heph(spec)
+                out = self.run_gate(spec)
                 text = (out.stdout + out.stderr).strip()
                 if out.returncode != 0 and not GATE_FAILED_RE.search(text):
                     # A gate dying with no failing test is usually the machine (vitest under memory pressure
                     # in the heph sandbox); it has twice passed on the next run. One retry before a person.
                     self.say(f"  {target}: failed with no finding — running it once more")
-                    out = self.heph(spec)
+                    out = self.run_gate(spec)
                     text = (out.stdout + out.stderr).strip()
                 if out.returncode != 0 and not GATE_FAILED_RE.search(text):
                     raise Stop(6, f"`{shown}` failed twice without reporting a failing test, a compile "
@@ -1080,7 +1080,7 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
         except cfg.ConfigError as why:
             raise Stop(6, str(why)) from None
         self.check_env()
-        self.heph_profile()
+        self.cache_env()
         self.opts.settings = run_profile(self.root, self.work)
         self.opts.allowed, self.opts.denied = tool_lists(self.root)
         self.say(f"headless runs: --settings {self.opts.settings} --setting-sources {SETTING_SOURCES}")

@@ -65,8 +65,8 @@ Your mandate: <one sentence on what must be true when you pass it>.
 ## Scope
 
 <What this reviewer owns — and explicitly what belongs to the other reviewers
-(arch-reviewer: structure; correctness-reviewer: wrong behavior; refactor-advisor:
-quality; test-reviewer / ui-test-reviewer: tests; api-reviewer: HTTP conformance;
+(name each other reviewer in `.claude/agents/` and its concern — the surface's correctness
+reviewer: wrong behavior; its test reviewer: tests;
 whether the surface should exist at all is the product spec's ruling — a wrong one is a MAJOR
 against `docs/product/<area>.md`, for the fix pass or the user).>
 

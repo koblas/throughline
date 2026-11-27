@@ -13,7 +13,8 @@ parts between `<!-- pipeline-only -->` markers (the implicit multi-agent trigger
 pipeline sequence, the agent-spawn authority, the two pauses) and `SINGLE_SESSION_NOTE` in their
 place: the lanes and the testing rule still hold there. The marker lines are never printed.
 
-In a repo with the config, either mode, it then lists every feature with issue drafts not yet
+In a repo with the config, either mode, it then says so in one line when `.claude/briefs/repo.md`
+is missing, and lists every feature with issue drafts not yet
 filed (`<git common dir>/pipeline/<slug>/ISSUES.md`, where `pipeline.py` keeps them outside the
 worktree): found work waits there for the user's yes, so it must not be forgotten. It files nothing.
 
@@ -54,6 +55,16 @@ def rules(text: str, mode: str) -> str:
     return MARKER_RE.sub("", text)
 
 
+def no_repo_brief(root: Path) -> str:
+    """One line when the repo has no `.claude/briefs/repo.md`: every agent is told to read it for the
+    repo's layout, codegen and conventions, and without it they guess. "" when it is there."""
+    if (root / ".claude" / "briefs" / "repo.md").is_file():
+        return ""
+    return (f"\nThis repo has no `.claude/briefs/repo.md`, which every pipeline agent reads for its layout, "
+            f"codegen and conventions. Offer to write one from `{PLUGIN_ROOT / 'templates' / 'new-repo' / 'repo-brief.md'}` "
+            "before the first Full or Light feature.\n")
+
+
 def unfiled(root: Path, drafts_dir: str) -> str:
     """A note naming each feature whose issue drafts are not all filed, or "" when there are none.
 
@@ -91,7 +102,7 @@ def context(cwd: Path) -> str:
                 f"so the pipeline is not set up here: do not enter it implicitly. "
                 f"(Plugin root: {PLUGIN_ROOT})\n")
     return (f"Pipeline plugin root: {PLUGIN_ROOT}\n\n" + rules(WORKFLOW.read_text(encoding="utf-8"), mode_of(root))
-            + unfiled(root, DRAFTS_DIR))
+            + no_repo_brief(root) + unfiled(root, DRAFTS_DIR))
 
 
 def main() -> int:

@@ -1,5 +1,5 @@
 ---
-description: Set up the baseline a new repository starts from — the shared pipeline plugin enabled, `.env` reads denied, a short CLAUDE.md, SECURITY.md, docs/product/ and docs/specs/ (product repos), a CI workflow, the standard issue labels, branch protection and the Project link. Asks whether it is a product or an infrastructure repo and, for a product repo, its surfaces; shows every file and label before writing, and never replaces an existing file without asking.
+description: Set up the baseline a new repository starts from — the shared pipeline plugin enabled, `.env` reads denied, a short CLAUDE.md, SECURITY.md, docs/product/, docs/specs/ and a `.claude/briefs/repo.md` skeleton (product repos), a CI workflow, the standard issue labels, branch protection and the Project link. Asks whether it is a product or an infrastructure repo and, for a product repo, its surfaces; shows every file and label before writing, and never replaces an existing file without asking.
 argument-hint: <optional — product | infrastructure, and anything already decided>
 allowed-tools: Read, Glob, AskUserQuestion, Bash(${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py *), Bash(git rev-parse *)
 ---

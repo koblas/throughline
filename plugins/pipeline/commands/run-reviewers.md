@@ -12,7 +12,7 @@ A feature in flight is driven by `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py next
 (`${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Building*). When every scenario is built, `next`
 runs the gate round itself: it snapshots the tree, writes the round's diff, finds every
 `type: reviewer` agent, matches its `triggers:` to the changed files, keeps the gate's own
-reviewers (a correctness and a test reviewer per language, `pipeline.py` `GATE_REVIEWERS`), runs
+reviewers (a correctness and a test reviewer per touched surface, `surfaces.*.reviewers`), runs
 `${CLAUDE_PLUGIN_ROOT}/scripts/mutation-sample.py` and `${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py --run`, writes one brief per triggered
 reviewer. On the following calls it writes `REVIEW-<NN>.md`, its verdict and its
 `METRICS.md` row from the replies, and drafts every MINOR and NIT as an issue in `ISSUES.md` — after one `refuter` pass on the reviewer MAJORs when
@@ -31,8 +31,8 @@ reviewer. On the following calls it writes `REVIEW-<NN>.md`, its verdict and its
    findings and mutation survivors.
 4. A re-gate diffs the fix only, and `next --only a,b` (or `none`) names the reviewers
    `${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Judgement calls* → *Re-gate narrowly* keeps. The
-   script keeps `arch-reviewer`, `api-reviewer` and `refactor-advisor` off every gate round;
-   they run only in ad-hoc mode. There is one fix pass and one re-gate: a re-gate that still
+   script keeps every reviewer that no surface names off every gate round; those run only in
+   ad-hoc mode. There is one fix pass and one re-gate: a re-gate that still
    fails stops for the user (`${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Judgement calls* → *One fix pass*).
 5. The round lists any *security-sensitive paths* it changed. That is a note for the user:
    `/security-hunt` is theirs to run and the gate never waits for it.
@@ -128,5 +128,5 @@ Merge into one severity-ranked list, deduplicating findings two reviewers raised
 verdict derived as above. The fix-pass brief cites that file, and `pipeline-reviewer`'s retro
 reads it.
 
-Style preferences never fail the gate. A `refactor-advisor` suggestion alone is
+Style preferences never fail the gate. A suggestion from a MINOR/NIT-only advisor alone is
 **PASS WITH FOLLOW-UPS**, not FAIL.

@@ -72,14 +72,9 @@ To try your working copy in Claude Code, add it as a local marketplace:
 
 Tests skip themselves when what they check is not there:
 
-- **Always, in this repo (3):** `test_check_phase.AllowlistGrowthTest`,
-  `test_check_phase.ReasonParityTest` and `test_pipeline_config.ValidationTest` compare the plugin
-  against the config of the repo that hosts it (`go/.golangci.yaml`, `.claude/pipeline.json`). This
-  repo is the plugin on its own, so they skip; they run when the plugin is vendored into a repo
-  that has that config.
 - **Without `heph` on `PATH` (5):** `test_runner_status.DetachedTest` starts the real runner against
   the fixture repo, whose `required_tools` include `heph` (content_buddy's build tool). CI does not
-  install it, so CI reports 8 skips; with `heph` installed you get 3.
+  install it, so CI reports 5 skips; with `heph` installed you get none.
 - Tests that need `go` (`test_diff_coverage`, `test_mutation_sample`) skip without it. CI installs
   Go, so they run there.
 

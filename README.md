@@ -59,6 +59,9 @@ The scripts read their config from the repo they run in, never from beside thems
   there. The work is done in the session, and `/pipeline:retro <slug>` writes a Full-lane feature's
   retro from its merged PRs. Everything that reads `surfaces` (the per-edit hook and lock,
   `diff-coverage.py`, `not-built.py`) works the same in both modes.
+  Its optional `"briefs"` map names, per agent, the briefs it reads besides its standard ones
+  (`{"correctness-reviewer": ["proof.md", "storage.md"], "architect": ["navigation.md"]}`), and a
+  surface's `phase` steps may run the repo's own diff checks with `{base}` and `{to}`.
   Its optional `"runner": {"file_issues": true}` lets the unattended runner file a finished
   feature's issue drafts itself; without it they wait for a person.
 - `.claude/runner-settings.json` — the unattended runner's permission profile.

@@ -20,7 +20,8 @@ The repo's Go test skill, as its `repo.md` names it (`.claude/skills/<name>/SKIL
 once before reviewing. A repo without one gets `${CLAUDE_PLUGIN_ROOT}/skills/tdd/SKILL.md` and the
 rules below.
 
-Frontend tests (`*.test.ts[x]`) belong to `ui-test-reviewer`; you are not triggered on them.
+Tests of other languages belong to their surface's own test reviewer (`surfaces.*.reviewers.test`);
+you are not triggered on them.
 
 ## Reading scope
 

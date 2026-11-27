@@ -15,28 +15,19 @@
     }
   },
   "test_support_paths": "/src/test/",
+  "briefs": {
+    "test-reviewer": ["proof.md", "storage.md"],
+    "ui-test-reviewer": ["proof.md"],
+    "correctness-reviewer": ["proof.md", "storage.md", "navigation.md"],
+    "arch-reviewer": ["navigation.md"],
+    "architect": ["navigation.md"]
+  },
   "generated_roots": ["go/gen/", "papi/", "frontend/packages/genapi/"],
   "top_dirs": ["go", "frontend", "protos", "papi", "docs", "aws-pulumi", ".claude"],
   "copy_sources": {
     "roots": [{"path": "go"}, {"path": "protos"}, {"path": "frontend/packages", "only_under": "src"}],
     "suffixes": [".go", ".proto", ".ts", ".tsx", ".js", ".jsx"],
     "skip_dirs": ["node_modules", "gen", "genapi", "dist", "build", ".heph"]
-  },
-  "checks": {
-    "reason_parity": {
-      "proto": "protos/api/v1/error.proto",
-      "union": "frontend/packages/shared/src/errors.ts",
-      "drift": [
-        "identity_email_already_verified", "identity_provider_already_linked", "identity_provider_last_signin",
-        "identity_provider_revoke_pending", "mfa_already_enabled",
-        "identity_passkey_already_registered", "identity_passkey_last_signin", "identity_passkey_limit_reached",
-        "identity_passkey_options_expired", "identity_passkey_revoke_pending",
-        "identity_passkey_verification_failed", "identity_recent_sign_in_required",
-        "password_not_set"
-      ]
-    },
-    "error_allowlist": "go/.golangci.yaml",
-    "error_rules": ".claude/rules/errors.md"
   },
   "runner": {
     "required_tools": ["go", "npx", "git", "heph"],
