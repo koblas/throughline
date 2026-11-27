@@ -184,7 +184,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertFalse(any("area:" in c for c in self.creates()), self.creates())
 
     def test_a_light_spec_opens_its_feature_issue_labelled_lane_light(self):
-        self.spec.write_text(SPEC.replace("**Area**: sharing", "**Area**: none"))
+        self.spec.write_text(APPROVED.replace("**Area**: sharing", "**Area**: none"))
 
         self.run_open()
 
@@ -193,7 +193,7 @@ class OpenIssuesTest(unittest.TestCase):
 
     def adopt(self, number=17):
         """The request came from captured issue #17: the spec records it as the feature issue."""
-        self.spec.write_text(SPEC + f"- Feature issue: #{number} (adopted)\n")
+        self.spec.write_text(APPROVED + f"- Feature issue: #{number} (adopted)\n")
 
     def edits(self):
         return [c for c in self.calls() if c.startswith("issue edit")]
