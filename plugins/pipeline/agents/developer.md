@@ -154,14 +154,21 @@ Scenarios complete: SCENARIO-01..NN. Last updated by SCENARIO-NN.
 
 ## Traps
 - `<the trap>` — `<what it breaks>` (SCENARIO-XX)
-
-## Open debts
-- `<debt>` — `<scenario that must close it, or "unowned — dies unless re-opened">`
-- `<debt>` — `<owner>` (from: checkpoint SCENARIO-XX | REVIEW-NN | orchestrator)
 ```
 
-A `(from: …)` entry was filed by the orchestrator. Remove it only when you closed it, and list
-it in your `## Handoff` as "closed by <test name or file:line>"; otherwise carry it over.
+**Debt is never kept in STATE.md.** `.runs/` is gitignored, so a debt that lives only there is
+lost with the run. Anything you find and do not fix becomes an issue draft the moment you find
+it:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py debt <feature-slug> "<title>" --scenario SCENARIO-XX \
+  --body "<what is owed, why it was left, and the later scenario that should close it if any>"
+```
+
+It lands in `.runs/<feature-slug>/ISSUES.md` beside the reviewers' findings below MAJOR, and
+reaches GitHub only on the user's yes. When you close a drafted debt (yours or an earlier one),
+delete its `## [ ]` block from ISSUES.md and list it in your `## Handoff` as "closed by <test
+name or file:line>". Name every debt you drafted in the `## Handoff` too.
 
 Maintenance rules — these keep it from growing:
 
@@ -173,12 +180,9 @@ Maintenance rules — these keep it from growing:
 - Keep `(SCENARIO-XX)` tag so reader can find full rationale when needed.
 - Keep under ~80 lines. Past that you copy handoffs instead of distilling. If it will not fit,
   entries too wordy — name the constraint, cut the explanation. This is a closing check: if the
-  rewrite is over, merge entries before you finish, and say so in the report. `## Open debts`
-  counts toward the 80 (aim ~30, one line each, pointing at `REVIEW-NN.md` for the rest);
-  `(from: …)` debts are merged last, never dropped.
-- **Unowned debt** is one thing that must never be silently dropped. If no remaining scenario
-  will close it, say so in those words, so final review can rule on it instead of discovering
-  it missing.
+  rewrite is over, merge entries before you finish, and say so in the report.
+- **Debt is never silently dropped.** It is an issue draft from the moment it is found (above),
+  so no rewrite of this file can lose it.
 - Per-scenario `## Handoff` blocks stay put as audit trail. STATE.md supersede them for
   reading, not for record.
 

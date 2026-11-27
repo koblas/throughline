@@ -58,8 +58,8 @@ A prompt that says **retro <feature-slug>** skips the procedure above and *Outpu
 below. Inputs: the specification (`docs/specs/<slug>.md`) and the product-spec files it links, and in `.runs/<slug>/`: `METRICS.md` (its
 `## Tokens` table is the `${CLAUDE_PLUGIN_ROOT}/scripts/feature-metrics.py` output — run the script only if that
 table is missing), the `REVIEW-*.md` and `CHECKPOINT-SCENARIO-*.md` reports (no checkpoint reports while
-`pipeline.py` `CHECKPOINT` is off), `ISSUES.md` (the findings below MAJOR, drafted as issues), and
-`STATE.md` → *Open debts*. Never read this
+`pipeline.py` `CHECKPOINT` is off), and `ISSUES.md` (the findings below MAJOR and the debts found while building, drafted as
+issues). Never read this
 feature's own earlier retro, and do not open other features' retros: your brief carries
 `${CLAUDE_PLUGIN_ROOT}/scripts/retro-stats.py`'s recurrence tables — every escape class with the number of features
 it was seen in, and every `rc` slug already proposed. Add this feature's escapes to those
