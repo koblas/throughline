@@ -214,6 +214,7 @@ def runner_only_env(root: Path) -> tuple[str, ...]:
 JUDGE_DENIED = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Agent"]
 READ_ONLY = ["Read", "Glob", "Grep"]
 RUNS_FILE = "RUNS.jsonl"
+FILE_PAUSE = 1.0  # seconds between the issues the runner files at DONE: GitHub limits content creation
 MAX_STEPS = 400
 # A blocking finding a reviewer wrote in a shape `pipeline.findings` does not read (a numbered list, a heading).
 RAW_BLOCKING_RE = re.compile(r"^[\s*\-\d.)#]*\**\[(?:BLOCKER|MAJOR)\b")
@@ -631,6 +632,28 @@ class Runner:
     def count_stop(self, stop: Stop) -> None:
         """One line in RUNS.jsonl per time the runner needed a person: the evaluation's `stops` metric."""
         self.log("", "runner-stop", "", {"result": f"{stop.code}: {str(stop)[:300]}"})
+
+    def file_drafts(self) -> None:
+        """At DONE, the feature's open issue drafts: filed here when the repo's config says so
+        (`runner.file_issues: true` in .claude/pipeline.json — that setting is the user's yes for every
+        unattended run in the repo), else named for a person to file. The runner runs `gh issue create`
+        itself, through `pipeline.py file-issues`; its agents still may not run `gh`. A failure is said
+        and leaves the rest drafted: the feature is done either way."""
+        drafts = pipeline.open_drafts(self.spec_dir)
+        if not drafts:
+            return
+        if not runner_settings(self.root).get("file_issues"):
+            self.say(f"{len(drafts)} issue draft(s) wait for a person: `{cfg.script('pipeline.py')} file-issues "
+                     f"{self.slug}` lists them (set `runner.file_issues` in .claude/pipeline.json to file them here)")
+            return
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = pipeline.file_issues(self.root, self.slug, True, FILE_PAUSE)
+        for line in out.getvalue().splitlines():
+            self.say(f"  {line}")
+        if code != 0:
+            self.say(f"filing stopped part-way; the rest stay drafted: `{cfg.script('pipeline.py')} file-issues "
+                     f"{self.slug}`")
 
     def finish(self, state: str, stop: Stop | None = None, cut_off: bool = False) -> None:
         self.note(state=state, spent=self.spent(), runs=len(self.runs()),
@@ -1072,6 +1095,7 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
                 self.say(f"done — ${self.spent():.2f} in {len(self.runs())} runs")
                 if draft := action.get("pr_body"):
                     self.say(f"PR body: {draft} — its `Closes #N` lines close the sub-issues when the PR merges")
+                self.file_drafts()
                 if touched := action.get("sensitive"):
                     self.say(f"this feature changed {len(touched)} security-sensitive path(s); `/security-hunt` "
                              "was not run — it is yours to run:\n  " + "\n  ".join(touched))

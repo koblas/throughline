@@ -4,6 +4,8 @@ Run: python3 -m unittest discover -s plugins/pipeline/tests
 """
 
 import argparse
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -182,6 +184,50 @@ class RunnerTest(tp.Feature):
         r.run()
 
         self.assertTrue(any(f"PR body: {self.run_dir / 'PR.md'}" in line for line in self.said), self.said)
+
+    def drafted(self, file_issues=None):
+        """One debt drafted before DONE, and the repo's `runner.file_issues` set as given."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.debt(self.root, "demo", "Retry the webhook on a 502")
+        if file_issues is not None:
+            path = self.root / ".claude" / "pipeline.json"
+            config = json.loads(path.read_text())
+            config["runner"]["file_issues"] = file_issues
+            path.write_text(json.dumps(config))
+        created, real = [], pl.subprocess.run
+
+        def gh(cmd, *a, **kw):
+            if list(cmd[:3]) == ["gh", "issue", "create"]:
+                created.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, "https://github.com/o/r/issues/77\n", "")
+            return real(cmd, *a, **kw)
+        pl.subprocess.run = gh
+        self.addCleanup(setattr, pl.subprocess, "run", real)
+        return created
+
+    def test_with_file_issues_set_the_runner_files_the_drafts_at_done(self):
+        created = self.drafted(file_issues=True)
+
+        self.assertEqual(self.runner().run(), 0)
+
+        self.assertEqual([c[4] for c in created], ["Retry the webhook on a 502"])
+        self.assertEqual(pl.open_drafts(self.spec_dir), [])
+        self.assertTrue(any("filed https://github.com/o/r/issues/77" in line for line in self.said), self.said)
+
+    def test_without_file_issues_the_drafts_wait_for_a_person(self):
+        created = self.drafted()
+
+        self.assertEqual(self.runner().run(), 0)
+
+        self.assertEqual(created, [])
+        self.assertEqual(len(pl.open_drafts(self.spec_dir)), 1)
+        self.assertTrue(any("1 issue draft(s) wait for a person" in line for line in self.said), self.said)
+
+    def test_a_file_issues_setting_that_is_not_a_boolean_is_refused(self):
+        self.drafted(file_issues="yes")
+
+        with self.assertRaises(rn.cfg.ConfigError):
+            rn.cfg.load(self.root)
 
     def test_starts_with_no_preflight_run_and_accepts_the_old_flags_as_no_ops(self):
         code, _ = self.go(no_preflight=False, no_docker=True)

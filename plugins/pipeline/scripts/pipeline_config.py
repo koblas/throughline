@@ -23,6 +23,10 @@ the rules that still apply (the lanes, the testing rule) with a note in place of
 `runner.py` and `pipeline.py next` refuse to run, and `pass_conditions` and `feature_budget_usd`, which
 only those two read, may be left out. Everything that reads `surfaces` works the same in either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
 
+`runner.file_issues` (optional, default false): `true` lets `runner.py` file a finished feature's
+issue drafts itself at DONE (`gh issue create`, through `pipeline.py file-issues --yes`). The setting is
+the user's yes for every unattended run in the repo; without it the drafts wait for a person.
+
 `ui` (optional, per surface) marks a surface that ships screens the gate looks at:
 `{"url": "http://localhost:5173", "start": ["npm", "run", "dev"]}`. `url` (required, http or https)
 is where the running app answers; `start` (optional) is the command, run from the surface's root,
@@ -342,6 +346,8 @@ def validate(path: Path, raw) -> None:
     for key in ("security_paths", "build_definitions"):  # required; "" says "none" explicitly
         _need(path, raw, key, "regex", "")
     _need(path, raw, "test_support_paths", "regex", "", optional=True)
+    if (runner := _need(path, raw, "runner", dict, "", optional=True)) is not None:
+        _need(path, runner, "file_issues", bool, "runner", optional=True)
     for key in ("generated_roots", "top_dirs"):
         _need(path, raw, key, "str_list", "", optional=True)
     for name, req in (_need(path, raw, "requests", dict, "", optional=True) or {}).items():
