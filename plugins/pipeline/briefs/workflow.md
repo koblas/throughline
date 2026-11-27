@@ -46,7 +46,7 @@ repo whose `.claude/pipeline.json` sets `"mode": "single-session"`, it leaves ou
   triage → kickoff (user pause) → product-vision rules surface and copy into
   `docs/product/<area>.md` → scenarios (user approval) → one architect sizing pass → spec and
   sub-issues → per scenario: architect (large scenarios only) → developer → final
-  `/pipeline:run-reviewers` gate (a correctness and a test reviewer) → one fix pass → one
+  `/pipeline:run-reviewers` gate (a correctness and a test reviewer per surface the diff touches) → one fix pass → one
   confirming round → retro. **On entering the pipeline, before anything else (worktree,
   triage), read `briefs/orchestration.md` in full** — every step, the rules between them, and
   the agent roster live there. Never skip the `/pipeline:run-reviewers` gate after all scenarios.
