@@ -24,6 +24,12 @@ Everything else the pipeline needs from a language is plain config: the `phase` 
 and the `tests` globs. Mutation sampling and the race gate are not in protocol 1, so a script
 surface reports them as skipped.
 
+Protocol 2, when a repo-supplied language first needs them, adds the operations the built-ins already
+have in process, so a script surface gains each the day it lands: `mutate` (mutants for a file's
+changed lines, run by its tests), `race` (the race gate), and `locate` (a test's text in its file, for
+the acceptance-test lock). Until then a script surface's mutation sample and race gate say skipped, the
+lock lets its edits through, and its test is found by name alone.
+
 Three outcomes, kept apart by every caller:
 
 - an operation the adapter does not list in `describe` → **skipped** (`Skipped`), said in the output;
