@@ -65,6 +65,7 @@ Exit status: 0 when an action was printed, 2 when it refused, 3 when the feature
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -1799,17 +1800,31 @@ def load_state(spec_dir: Path) -> dict:
         raise Refuse(f"{', '.join(unopened)} {'has' if len(unopened) == 1 else 'have'} no sub-issue — the approved "
                      f"spec's issues are opened before the build: `{script('pipeline.py')} open-issues {spec_dir.name}` "
                      "lists them, and `--yes` (on the user's approval of the spec) creates them")
-    if fresh and any(ticked for _, ticked in listed):
+    if fresh:
         # A scenario is built when its acceptance test is written AND its sub-issue is closed: a written
-        # line alone is a run that was cut off before the pipeline recorded the scenario done. A state
-        # that cannot be read is not taken as open: that would build a finished scenario again.
+        # line alone is a run that was cut off before the pipeline recorded the scenario done (or its PR has
+        # not merged yet), and is finished again. A state that cannot be read is not taken as open: that
+        # would build a finished scenario again. A sub-issue closed on a scenario with no written line is
+        # the one state the pipeline never leaves: neither side is trusted, and the user decides.
         issue_of = {b["id"]: b["issue"] for b in scenario_blocks(text)}
         wanted = [issue_of[u] for u, ticked in listed if ticked]
-        states = ISSUE_STATES(spec_dir.parents[2], wanted)
+        states = ISSUE_STATES(spec_dir.parents[2], wanted) if wanted else {}
         if unread := [n for n in wanted if n not in states]:
             raise Refuse(f"could not read the state of {', '.join(f'#{n}' for n in unread)} from GitHub, so which "
                          "written scenarios are built is unknown — check `gh auth status` and the network, then "
                          "call `next` again")
+        # The unwritten scenarios' issues are read only to catch that state: a start GitHub cannot answer
+        # for them goes ahead as it always has, building them.
+        if rest := [issue_of[u] for u, ticked in listed if not ticked and isinstance(issue_of.get(u), int)]:
+            with contextlib.suppress(Refuse):
+                states |= ISSUE_STATES(spec_dir.parents[2], rest)
+        if odd := [u for u, ticked in listed if not ticked and states.get(issue_of.get(u)) == "CLOSED"]:
+            raise Refuse("the specification and GitHub disagree on what is built:\n"
+                         + "\n".join(f"- {u}: #{issue_of[u]} is CLOSED, but the spec has no `Acceptance test:` line "
+                                     "for it (none, or one that is not just the test file and name)" for u in odd)
+                         + "\nAsk the user which is right, and do not pick for them. Built (it was merged without "
+                         "the line): write the scenario's `Acceptance test:` line. Not built (closed by mistake, or "
+                         f"by an unrelated PR): reopen the issue (`gh issue reopen N`). Then call `next` again")
         listed = [(u, ticked and states.get(issue_of[u]) == "CLOSED") for u, ticked in listed]
     state = {"scenarios": {}, "rounds": [], "pending": None, "final": None, "retro": False,
              "base": "HEAD", "exclude": []} if fresh else json.loads(path.read_text())

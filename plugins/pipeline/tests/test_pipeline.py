@@ -224,6 +224,26 @@ class NextTest(Feature):
         self.assertEqual(code, 2)
         self.assertIn("REFUSED", out)
 
+    def test_a_closed_sub_issue_on_a_scenario_the_spec_says_is_unbuilt_stops_for_the_user(self):
+        self.states[ISSUE["SCENARIO-01"]] = "CLOSED"  # closed on GitHub, but no `Acceptance test:` line
+
+        code, out = self.next()
+
+        self.assertEqual(code, 2)
+        self.assertIn("REFUSED", out)
+        self.assertIn(f"SCENARIO-01: #{ISSUE['SCENARIO-01']} is CLOSED", out)
+        self.assertIn("no `Acceptance test:` line", out)
+        self.assertIn("Ask the user", out)
+        self.assertFalse((pl.runs_of(self.spec_dir) / "PIPELINE.json").exists())  # nothing decided for them
+
+    def test_a_written_scenario_whose_sub_issue_is_still_open_is_finished_again_not_stopped(self):
+        self.tick("SCENARIO-01")
+        self.states[ISSUE["SCENARIO-01"]] = "OPEN"  # its PR has not merged: the normal state mid-feature
+
+        code, out = self.next()
+
+        self.assertNotIn("REFUSED", out)
+
     def spawned(self):
         """Every command `next` runs through `subprocess.run`, as it ran them."""
         calls, run = [], pl.subprocess.run

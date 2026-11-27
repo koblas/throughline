@@ -197,13 +197,24 @@ class SubIssueTest(V4Feature):
     def test_an_acceptance_line_with_trailing_text_is_not_a_tick(self):
         self.built("SCENARIO-01")
         self.built("SCENARIO-02", "`go/b_test.go` `TestUnshare` — done")
-        self.states = {2: "CLOSED", 3: "CLOSED"}
+        self.states = {2: "CLOSED", 3: "OPEN"}  # its PR not merged yet: a malformed line is simply not built
 
         _, out = self.next()
 
         self.assertFalse(self.state()["scenarios"]["SCENARIO-02"]["done"])
         self.assertIn("stage: build run 1 — SCENARIO-02", out)
         self.assertEqual(pl.progress(self.spec.read_text())[1], ("SCENARIO-02", False))
+
+    def test_a_closed_issue_whose_acceptance_line_is_not_a_tick_goes_to_the_user(self):
+        self.built("SCENARIO-01")
+        self.built("SCENARIO-02", "`go/b_test.go` `TestUnshare` — done")
+        self.states = {2: "CLOSED", 3: "CLOSED"}
+
+        code, out = self.next()
+
+        self.assertEqual(code, 2)
+        self.assertIn("SCENARIO-02: #3 is CLOSED, but the spec has no `Acceptance test:` line", out)
+        self.assertNotIn("SCENARIO-01:", out)
 
     def test_states_github_cannot_give_refuse_rather_than_rebuild_a_built_scenario(self):
         self.built("SCENARIO-01")

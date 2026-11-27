@@ -169,7 +169,9 @@ session at the same time.
   built and checkpointed; `next` says which. A scenario counts as built only when it has its
   `Acceptance test:` line and its sub-issue is closed on GitHub (its PR merged); a line with the
   issue still open is finished again by the next call (its checkpoint, when on) and its `Closes #N`
-  written into `.runs/<slug>/PR.md`.
+  written into `.runs/<slug>/PR.md`. A sub-issue that is closed on a scenario with no `Acceptance
+  test:` line is the one disagreement `next` will not settle: it refuses with both states, and the
+  user says which is right (write the line, or reopen the issue).
 
 ## Direct lane: batches
 
