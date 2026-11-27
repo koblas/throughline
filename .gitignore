@@ -1,0 +1,3 @@
+# The documentation site (make docs)
+/out/
+__pycache__/

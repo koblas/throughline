@@ -111,6 +111,9 @@ Many tests drive `go`, `npx`, `git` and `ps` in scratch repos and need those on 
 whole suite on Python 3.12–3.15 with Go and Node installed, plus `ruff check` and
 `claude plugin validate .` (`.github/workflows/checks.yaml`). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The documentation site, <https://koblas.github.io/throughline/>, is built from `mkdocs.yml` and
+`docs/` with `make docs` (needs [`uv`](https://docs.astral.sh/uv/)).
+
 ## License
 
 [MIT](LICENSE)
