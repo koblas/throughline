@@ -71,13 +71,15 @@ run that ticks · **5a** checkpoint — **off** (`pipeline.py` `CHECKPOINT`, a t
 2026-11-24 over three features: `check.py phase` diff coverage and the pre-tick mutation sample
 stand in for it; turn it back on if gate MAJORs rise) · **5b** the `METRICS.md` row · **7**
 gate round (`/pipeline:run-reviewers` pipeline mode: diff, the two gate reviewers, mutation sample,
-`spec-check --run`; every MINOR and NIT drafted to `ISSUES.md`) · **7a** a `refuter` pass on the round's reviewer MAJORs, off by default
+`spec-check --run`, and on a surface with a `ui` the screenshots of each screen state for the
+correctness reviewer; every MINOR and NIT drafted to `ISSUES.md`) · **7a** a `refuter` pass on the round's reviewer MAJORs, off by default
 (`pipeline.py` `REFUTE_MAJORS`) · `REVIEW-NN.md`, its verdict and its `METRICS.md` row ·
 **8** the one fix pass · **9** one re-gate on the fix only · **10** the token ledger and the
 pass conditions scored, then the retro (`docs/specs/<slug>.retro.md`). A scenario's sub-issue
 is closed by `next` itself once the scenario is recorded done. At `DONE` it names the
 issue drafts: show them to the user, and file them only on their yes (`pipeline.py file-issues
-<slug> --yes`).
+<slug> --yes`). Once the PR is open, `pipeline.py post-review <slug> --pr <N>` shows the last
+round's findings as one PR review; post it with `--yes` only on their yes.
 
 ### Without a chat session — `scripts/runner.py <slug>`
 
@@ -187,9 +189,9 @@ It runs as a batch, one unit per package:
 - Never skip the gate. `REVIEWER DISCOVERY FAILED` means it did not run; it is not a PASS.
 - **Inherited context is `STATE.md`**, rewritten by `developer` at the end of each scenario.
 - **PASS WITH FOLLOW-UPS is done.** Only BLOCKER and MAJOR block; no fix pass follows it.
-- **A fix pass exists for BLOCKER and MAJOR.** Which MINORs ride along is
-  `briefs/fix-pass.md` → *Fix passes*. Every other MINOR/NIT is an issue draft in the
-  `.runs/<slug>/ISSUES.md`, which reaches GitHub only on the user's yes.
+- **A fix pass exists for BLOCKER and MAJOR, and applies nothing else** (`briefs/fix-pass.md`
+  → *Fix passes*). Every MINOR/NIT is an issue draft in `.runs/<slug>/ISSUES.md`, which
+  reaches GitHub only on the user's yes.
 - **A user exclusion travels verbatim.** The script copies the spec's `**Excluded paths**`
   line into every brief; a prompt you write yourself repeats it word for word.
 - **A prompt you write yourself** starts with a `pipeline.py tag` line, cites brief files

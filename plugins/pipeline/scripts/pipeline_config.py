@@ -23,6 +23,16 @@ the rules that still apply (the lanes, the testing rule) with a note in place of
 `runner.py` and `pipeline.py next` refuse to run, and `pass_conditions` and `feature_budget_usd`, which
 only those two read, may be left out. Everything that reads `surfaces` works the same in either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
 
+`ui` (optional, per surface) marks a surface that ships screens the gate looks at:
+`{"url": "http://localhost:5173", "start": ["npm", "run", "dev"]}`. `url` (required, http or https)
+is where the running app answers; `start` (optional) is the command, run from the surface's root,
+that starts it — leave it out when the app is already up. When a gate round's diff touches a surface
+with `ui`, `pipeline.py gate` tells the orchestrator to start the app, open each screen the
+specification's `**Screens**:` line names in the browser pane, and save one screenshot per screen
+state (loading, empty, error, populated) under `.runs/<slug>/screens/`; the surface's correctness
+reviewer reads those images against the product spec's Screen states table. A surface without `ui`
+(a Go service, a repo with no UI) gets none of this.
+
 Agent names leave the scripts through `agent()` and come back through `role_of()`: the plugin's own
 agents are spawned as `pipeline:<name>`, the repo's own (its surface reviewers) by their bare name.
 
@@ -193,6 +203,7 @@ class Surface:
         self.workspaces: list[str] = raw.get("workspaces", [self.root])
         self.test_one: list[str] | None = raw.get("test_one")
         self.test_related: list[str] | None = raw.get("test_related")
+        self.ui: dict | None = raw.get("ui")  # {"url", "start"?}: the running app the gate screenshots
 
     def owns(self, path: str) -> bool:
         """Under the surface's root: what a checkpoint asks its test reviewer about."""
@@ -372,6 +383,10 @@ def validate(path: Path, raw) -> None:
             _need(path, gate, "command", "command", f"{at}.full_gates[{i}]")
         for key in ("test_one", "test_related"):
             _need(path, s, key, "command", at, optional=True)
+        if (ui := _need(path, s, "ui", dict, at, optional=True)) is not None:
+            if not re.match(r"https?://\S+$", _need(path, ui, "url", str, f"{at}.ui")):
+                _fail(path, f"{at}.ui.url", "must be an http:// or https:// URL")
+            _need(path, ui, "start", "command", f"{at}.ui", optional=True)
 
 
 _CACHE: dict = {}

@@ -7,16 +7,16 @@ For the `developer` in fix mode and the orchestrator writing a fix-pass brief. R
 
 ## Fix passes: no new behaviour
 
-A fix pass applies BLOCKER and MAJOR findings. A MINOR is folded only when it sits in a file
-a blocking fix already edits; cheap folds are docs, renames, test additions and extractions
-that keep behaviour identical. **A fold that adds runtime behaviour is not
-cheap.** New behaviour either becomes an issue draft (`scripts/pipeline.py debt <slug> "<title>"`),
-or is folded with its tests planned in the same brief, named per branch. **Moving a check
+A fix pass applies BLOCKER and MAJOR findings, and only those. **No MINOR or NIT is folded
+in**, not even one in a file a blocking fix already edits: every MINOR and NIT is an issue
+draft in `.runs/<slug>/ISSUES.md` (the gate drafts them itself), filed on the user's yes.
+Anything else the fix turns up and leaves becomes a draft too
+(`scripts/pipeline.py debt <slug> "<title>"`). **Moving a check
 from one function to another is a behaviour change** for every caller that ran it: each
 such caller needs a row that fails without the check (for advice, the round-trip in
 `briefs/planning.md`).
 
-**This applies to a MAJOR's fix too, not only to folds.** When the fix for a finding adds
+**A blocking fix that adds behaviour plans its tests.** When the fix for a finding adds
 runtime behaviour (a detached context, a timeout, a retry, a new branch), the fix-pass brief
 names, before dispatch:
 

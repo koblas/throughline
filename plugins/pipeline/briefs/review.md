@@ -17,15 +17,25 @@ anything the fix itself introduced. A surface the fix did not touch has nothing 
 
 **Report every finding in the round you find it.** Do not hold a MINOR back "for the next
 pass", do not open with a finding you then withdraw, and do not re-raise a finding the
-previous round already recorded as deferred. Every BLOCKER and MAJOR is listed. **MINOR and NIT
-are capped: at most 5 MINORs and 3 NITs, most consequential first**, then one line —
-`Not listed: N MINOR, M NIT (<the kinds>)`. Each listed one becomes an issue draft the user
-must triage, so a long tail costs more than it saves; a smell lint already reports (length, doc
-budget, test shape) is not listed at all.
+previous round already recorded as deferred. **Every finding is listed, at every severity** —
+no cap, no `Not listed` tally: a finding left off the list is lost, because each MINOR and NIT
+becomes an issue draft and nothing else carries it forward. Rank them most consequential first.
+A smell lint already reports (length, doc budget, test shape) is lint's, not a finding, and is
+not listed.
 
 **Say what you could not check.** A path you had no way to exercise — an environment you
 cannot change, a backend you cannot reach (no docker → testcontainers skipped) — is reported
 as unchecked, not silently passed and not guessed at.
+
+**Screens against the states table** (the correctness reviewer, on a surface whose
+`.claude/pipeline.json` entry has a `ui`). Your brief lists one screenshot path per screen and
+state under `.runs/<slug>/screens/`, captured from the running app before you were spawned. Read
+each image and hold it to its `| Screen | State | Copy | Controls |` row in the product spec: a
+ruled string missing, reworded or misplaced, a control the row names absent (or one it does not
+name present), or the wrong state shown is a finding — MAJOR, since the screen a user sees is the
+failure. A listed path with no file is a state nobody could capture: report it unchecked. This is
+the gate's only visual check; you stay read-only and do not drive the app yourself. A surface
+without `ui` gets no screenshots, and you judge its screens from the code alone.
 
 **Do not run `-race`.** The acceptance-review race gate owns it (core `briefs/core.md` → *Verification*). Report
 a suspected race as a finding, with the interleaving that produces it.

@@ -19,6 +19,9 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
   unlock <slug> <SCENARIO-NN>       let a build run edit the scenario's acceptance test
   tag <kind> <slug> [unit]          the run tag for a prompt this script does not write
   file-issues <slug|file.md> [--yes] [--pause S]  list issue drafts; --yes (the user's yes) files them
+  post-review <slug> --pr N [--round NN] [--yes]
+                                    a gate round's findings as one PR review (inline where the line is in the
+                                    diff, the rest in its body); --yes (the user's yes) posts it
   open-issues <slug> [--yes] [--pause S]
                                     the spec's feature issue and one sub-issue per scenario; --yes creates them
   retro <slug> [--pr N ...] [--reply FILE]
@@ -483,6 +486,24 @@ def checkpoint(root: Path, slug: str, unit: str, pre: str, small: bool, exclude:
     return {"agents": agents, "tag": tag, "mutation": summary}
 
 
+SCREENS_DIR = "screens"  # in the run folder: one screenshot per screen state, for the correctness reviewer
+
+
+def spec_screens(spec_text: str) -> list[str]:
+    """The screens the specification's `**Screens**:` line names; none for `none` or no line."""
+    m = re.search(r"^\*\*Screens\*\*:\s*(.+)$", spec_text, re.M)
+    if not m or re.match(r"none\b", m.group(1).strip(), re.I):
+        return []
+    return [s.strip(" `") for s in m.group(1).split(",") if s.strip(" `")]
+
+
+def screen_shots(spec_dir: Path, screens: list[str]) -> list[tuple[str, str, Path]]:
+    """(screen, state, the screenshot's path) for every state of every screen, in the spec's order."""
+    folder = runs_of(spec_dir) / SCREENS_DIR
+    return [(screen, state, folder / f"{re.sub(r'[^a-z0-9]+', '-', screen.lower()).strip('-')}-{state}.png")
+            for screen in screens for state in spec_check().SCREEN_STATES]
+
+
 def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, only_arg: str | None,
          exclude: list[str]) -> dict | None:
     spec_dir = spec_folder(root, slug)
@@ -539,6 +560,10 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
     spec_text = spec_file(spec_dir).read_text() if spec_file(spec_dir).is_file() else ""
     areas = spec_check().area_files(root, spec_text)[0]
     prior = runs_of(spec_dir) / f"REVIEW-{round_no - 1:02d}.md"
+    # A surface with a `ui` whose code this round touches: its correctness reviewer compares a screenshot of
+    # each screen state the spec names against the product spec's Screen states table.
+    shots = screen_shots(spec_dir, spec_screens(spec_text))
+    shown = [s for s in c.surfaces if s.ui and shots and s.correctness in triggered and any(map(s.owns, files))]
 
     def body(name: str, scope: list[str]) -> str:
         briefs = ", ".join(f"`{b}`" for b in [*cfg.standing_briefs(root), *cfg.briefs(
@@ -551,8 +576,8 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
             f"- Read first: {briefs}.",
             f"- Diff: `{diff}` — start from it and read only what it touches; widen only when the diff "
             "cannot settle a question, and say which finding forced it.",
-            "- Report every finding you have in this round; hold nothing back for a later pass. MINOR and NIT are "
-            f"capped (`{brief('review.md')}` → *Reviewing: scope and completeness*).",
+            "- Report every finding you have in this round; hold nothing back for a later pass. List every MINOR and "
+            f"NIT: each becomes an issue draft (`{brief('review.md')}` → *Reviewing: scope and completeness*).",
         ]
         if regate:
             lines.append(f"- Re-gate: your prior findings are the entries under your name in `{prior}` — confirm "
@@ -566,6 +591,12 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
                          "or string it does not honour, is a finding.")
         if excluded:
             lines.append(f"- {excluded}")
+        if any(s.correctness == name for s in shown):
+            lines += ["", "## Screens — compare each against the Screen states table", "",
+                      f"Read each image below and hold it to its `| Screen | State | Copy | Controls |` row in the product "
+                      f"spec (`{brief('review.md')}` → *Screens against the states table*). A file that is not there "
+                      "was not captured: report that screen state as unchecked.", "",
+                      *(f"- {screen} / {state}: `{path}`" for screen, state, path in shots)]
         lines += ["", "## Scope — the files that matched your triggers", "", *(f"- `{f}`" for f in scope)]
         mine = c.test_surface(name)
         if sample := survivors[mine.name] if mine else "":
@@ -585,6 +616,17 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
           + (check.stdout + check.stderr).strip())
     print("\n## Security-sensitive paths — `/security-hunt` is the user's call, not a gate step\n")
     print("\n".join(f"- {f}" for f in sensitive) or "- none")
+    for s in shown:
+        start = (f"Start the app with `{' '.join(s.ui['start'])}` from `{s.root}/`, in the background. "
+                 if s.ui.get("start") else "The app is already running. ")
+        print(f"\n## Screens — before spawning: the `{s.name}` surface has a UI\n\n"
+              f"`{s.correctness}` compares the running screens against the Screen states table. {start}Open "
+              f"`{s.ui['url']}` in the browser pane; for each screen and state below, bring the screen to that state "
+              "and save one screenshot to exactly that path (make the folder first). Leave out a state you cannot "
+              "reach: the reviewer reports it unchecked. Stop the app once the last one is saved.\n")
+        print("\n".join(f"- {screen} / {state}: `{path}`" for screen, state, path in shots))
+        ACTION.setdefault("screens", []).append({"surface": s.name, "url": s.ui["url"], "start": s.ui.get("start"),
+                                                 "cwd": s.root, "shots": [str(p) for _, _, p in shots]})
     print("\n## Spawn — one message, every agent with `run_in_background: false`\n")
     print("\n".join(emit(work, tag, n, body(n, s)) for n, s in triggered.items()) or "no reviewer triggered")
     # Per surface (its config name): whether the round changed what its full gates cover.
@@ -1035,6 +1077,127 @@ def file_issues(root: Path, target: str, yes: bool, pause: float = 0.0) -> int:
         url = lines[-1]
         path.write_text(path.read_text().replace(claim, f"## [x] {d['title']} — {url}", 1))
         print(f"filed {url} — {d['title']}")
+    return 0
+
+
+# --- post-review: a gate round's findings as one pull-request review -----------------------
+
+REVIEW_LINE_RE = re.compile(r"^\*\*(.+?)\*\* — (.*)$")  # `write_review`'s `**reviewers** — [SEV] …`
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def review_findings(path: Path) -> list[dict]:
+    """The findings of a REVIEW-NN.md as `write_review` wrote them: severity, file, line, reviewers, text."""
+    out, current = [], None
+    for line in path.read_text().splitlines():
+        if (m := REVIEW_LINE_RE.match(line)) and (f := FINDING_RE.match(m.group(2))):
+            current = {"sev": f.group(1), "file": f.group(2) or "", "line": int(f.group(3) or 0),
+                       "reviewers": m.group(1).split(", "), "text": [m.group(2)]}
+            out.append(current)
+        elif not line.strip() or line.startswith("#"):
+            current = None
+        elif current:
+            current["text"].append(line.rstrip())
+    return out
+
+
+def diff_lines(diff: str) -> set[tuple[str, int]]:
+    """(file, line) of every new-side line a unified diff shows — the lines a review comment may sit on."""
+    out: set[tuple[str, int]] = set()
+    path, at = None, 0
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            path = target[2:] if target.startswith("b/") else None  # `/dev/null`: the file was deleted
+        elif m := HUNK_RE.match(line):
+            at = int(m.group(1))
+        elif path and line[:1] in (" ", "+"):
+            out.add((path, at))
+            at += 1
+    return out
+
+
+def gh_pr_diff(root: Path, pr: int) -> tuple[str, str]:
+    """The pull request's diff, and the error when `gh` could not read it."""
+    out = gh(root, "pr", "diff", str(pr))
+    return (out.stdout, "") if out.returncode == 0 else ("", (out.stderr or out.stdout).strip())
+
+
+def gh_post_review(root: Path, pr: int, review: dict) -> tuple[str, str]:
+    """Create one review on the pull request: its URL, and the error when GitHub refused it."""
+    out = subprocess.run(["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews", "--method", "POST",
+                          "--input", "-"], cwd=root, capture_output=True, text=True, input=json.dumps(review))
+    if out.returncode != 0:
+        return "", (out.stderr or out.stdout).strip()
+    try:
+        return json.loads(out.stdout).get("html_url", "") or "(posted; no URL returned)", ""
+    except json.JSONDecodeError:
+        return "(posted; no URL returned)", ""
+
+
+# Hooks the tests replace: nothing here reaches GitHub except through these.
+PR_DIFF = gh_pr_diff
+POST_REVIEW = gh_post_review
+
+
+def post_review(root: Path, slug: str, pr: int, round_no: int | None = None, yes: bool = False) -> int:
+    """Show a gate round's findings as one review on pull request `pr`; with `yes`, post it.
+
+    A finding whose `file:line` is a line of the PR's diff is an inline comment there; every other finding
+    (no line, or a line the diff does not show — GitHub refuses a whole review over one such comment) is
+    listed in the review's body. The review is a COMMENT: the gate's verdict, not GitHub's, blocks the merge.
+    A posted round is marked `REVIEW-NN.posted` (its URL) and never posted twice.
+    """
+    runs = runs_of(spec_folder(root, slug), make=False)
+    rounds = sorted(runs.glob("REVIEW-[0-9][0-9].md")) if runs.is_dir() else []
+    if round_no is not None:
+        rounds = [p for p in rounds if p.name == f"REVIEW-{round_no:02d}.md"]
+    if not rounds:
+        print(f"REFUSED — no REVIEW-{'%02d' % round_no if round_no is not None else 'NN'}.md in {runs}: "
+              "`next` writes one when a gate round's reviewers have reported")
+        return 2
+    path = rounds[-1]
+    unit = path.stem
+    marker = path.with_suffix(".posted")
+    if marker.is_file():
+        print(f"{unit} is already posted: {marker.read_text().strip()}")
+        return 0
+    found = review_findings(path)
+    if not found:
+        print(f"{unit} has no findings: nothing to post")
+        return 0
+    diff, why = PR_DIFF(root, pr)
+    if why:
+        print(f"REFUSED — could not read PR #{pr}'s diff: {why}")
+        return 2
+    shown = diff_lines(diff)
+    inline = [f for f in found if (f["file"], f["line"]) in shown]
+    rest = [f for f in found if f not in inline]
+    verdict = re.search(r"^### Verdict: (.+)$", path.read_text(), re.M)
+
+    def said(f: dict) -> str:
+        return f"**{f['sev']}** ({', '.join(f['reviewers'])}) — " + "\n".join(f["text"]).strip()
+
+    body = "\n".join([f"Pipeline gate `{unit}` of `{slug}` — {verdict.group(1) if verdict else 'no verdict'}, "
+                      f"{counts(found)} BLOCKER/MAJOR/MINOR/NIT. Inline: {len(inline)}.",
+                      *(["", "Findings not on a line of this diff:", "", *(f"- {said(f)}" for f in rest)] if rest else []),
+                      "", f"Every MINOR and NIT is also an issue draft in `.runs/{slug}/{ISSUES_FILE}`."])
+    review = {"event": "COMMENT", "body": body,
+              "comments": [{"path": f["file"], "line": f["line"], "side": "RIGHT", "body": said(f)} for f in inline]}
+    if not yes:
+        print(f"{unit} of `{slug}` as one review on PR #{pr} — shown to the user, posted only on their yes with "
+              f"`post-review {slug} --pr {pr} --round {unit[-2:]} --yes`:\n")
+        print(f"## Inline comments ({len(inline)})\n")
+        print("\n".join(f"- `{f['file']}:{f['line']}` {said(f)}" for f in inline) or "- none")
+        print(f"\n## In the review body ({len(rest)})\n")
+        print("\n".join(f"- {said(f)}" for f in rest) or "- none")
+        return 0
+    url, why = POST_REVIEW(root, pr, review)
+    if why:
+        print(f"gh could not post {unit} to PR #{pr}: {why}", file=sys.stderr)
+        return 1
+    marker.write_text(url + "\n")
+    print(f"posted {unit} to PR #{pr}: {url} ({len(inline)} inline, {len(rest)} in the body)")
     return 0
 
 
@@ -2104,10 +2267,9 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
         tag = tag_line("gate-fix", unit, slug)
         body = brief_head(spec_dir, f"Gate fix — {unit} of `{slug}`") + [
             "", "## Review Findings", "",
-            f"Fix mode. Fix every BLOCKER and MAJOR in `{runs_of(spec_dir) / (unit + '.md')}`, and the MINORs that sit in "
-            f"a file one of those fixes edits and add no runtime behaviour (`{here('briefs/fix-pass.md')}` → *Fix "
-            "passes*). Every other MINOR and NIT is drafted as an issue — leave it. A finding marked `Refuted (was MAJOR)` was "
-            "checked and found wrong: do not fix it.",
+            f"Fix mode. Fix every BLOCKER and MAJOR in `{runs_of(spec_dir) / (unit + '.md')}`, and nothing else "
+            f"(`{here('briefs/fix-pass.md')}` → *Fix passes*). Every MINOR and NIT is drafted as an issue — leave it, "
+            "even in a file a fix edits. A finding marked `Refuted (was MAJOR)` was checked and found wrong: do not fix it.",
             "", "If a command the fix needs cannot run, open your reply with `BLOCKED: <what you need>` and stop.",
             *(["", "## Run for you since your last run", "", state.pop("ran_fix")] if state.get("ran_fix") else []),
         ]
@@ -2170,6 +2332,9 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
         replace_section(runs_of(spec_dir) / "METRICS.md", "## Evaluation", scored)
         print("note: pasted the token ledger into METRICS.md → Tokens; "
               + (f"pass conditions: {passed} of {total} met\n" if total else "nothing to score\n"))
+        print(f"note: once the pull request is open, `{script('pipeline.py')} post-review {slug} --pr <N> --round "
+              f"{last['n']:02d}` shows REVIEW-{last['n']:02d}'s findings as one PR review; on the user's yes, "
+              "the same with `--yes` posts it\n")
         state["final"] = "scored"
     if not state["retro"]:
         print("stage: retro")
@@ -2240,6 +2405,11 @@ def build_parser() -> argparse.ArgumentParser:
     fi.add_argument("slug", help="feature slug, or a path to an issues file in the same `## [ ]` format")
     fi.add_argument("--pause", type=float, default=0.0, metavar="SECONDS", help="wait between issues (bulk filing)")
     fi.add_argument("--yes", action="store_true", help="the user said yes: run `gh issue create` for each open draft")
+    pr = sub.add_parser("post-review", help="a gate round's findings as one PR review; with --yes, post it")
+    pr.add_argument("slug")
+    pr.add_argument("--pr", type=int, required=True, metavar="N", help="the pull request to review")
+    pr.add_argument("--round", type=int, metavar="NN", help="the gate round (default: the latest REVIEW-NN.md)")
+    pr.add_argument("--yes", action="store_true", help="the user said yes: post the review with `gh api`")
     oi = sub.add_parser("open-issues", help="the spec's feature issue and scenario sub-issues; with --yes, create them")
     oi.add_argument("slug")
     oi.add_argument("--pause", type=float, default=0.0, metavar="SECONDS", help="wait between issues")
@@ -2328,6 +2498,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
         return 0
     if args.cmd == "file-issues":
         return file_issues(root, args.slug, args.yes, args.pause)
+    if args.cmd == "post-review":
+        return post_review(root, args.slug, args.pr, args.round, args.yes)
     if args.cmd == "open-issues":
         return open_issues(root, args.slug, args.yes, args.pause)
     if args.cmd == "batch":
