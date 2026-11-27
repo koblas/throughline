@@ -101,12 +101,15 @@ Skills are files: `Read` each **once** at start, not per step — the plugin's (
    - **Sweep** — `${CLAUDE_PLUGIN_ROOT}/scripts/check.py phase` on touched packages (build, `golangci-lint`, tests;
      `tsc` + eslint for frontend; plus the checks on what this scenario changed — doc budget,
      real sleeps, test file layout (the repo's test skill → *Test file layout*), `go mod tidy`,
-     absence-only tests, wire-reason parity, Go diff coverage — listed in its docstring), fix everything it lists: missing `exhaustive` cases,
+     absence-only tests, wire-reason parity, Go and TS diff coverage — listed in its docstring), fix everything it lists: missing `exhaustive` cases,
      unimplemented interface methods, doc comments, count bumps. Toolchain enumerate chores; no
-     hand-hunting. `coverage` names each changed Go block no test runs (skipped under `--run`):
-     test the arm, or mark a block that truly cannot run `// uncovered: <why>` on its opening
-     line — a reviewer reads every marker. Only tests in the packages passed count: include the
-     package holding the acceptance test.
+     hand-hunting. `coverage` names each changed Go block, or TS statement / branch arm /
+     function, no test runs (skipped under `--run` / `--filter`): test the arm, or mark a block
+     that truly cannot run `// uncovered: <why>` on its opening line — a reviewer reads every
+     marker. Only tests in the packages passed count: include the package holding the acceptance
+     test (TS: a workspace's own tests judge its own files). **`next` enforces it:** before it
+     records a ticked scenario done it runs this phase on every package and workspace the
+     scenario changed; a failure comes back to you as a run carrying the output.
    - **Tick in bulk, and always tick.** Mark phase's steps `- [x]` in one edit when phase ends,
      not one edit per step — but never end a run with verified work unticked: the ticks are how
      the scenario moves, and `BLOCKED:` is how you say it cannot (`${CLAUDE_PLUGIN_ROOT}/briefs/build.md` →

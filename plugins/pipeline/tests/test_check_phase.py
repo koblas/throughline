@@ -1,7 +1,9 @@
 """Tests for the phase checks in scripts/check.py that read the diff: the doc-comment budget and
 real sleeps.  Run: python3 -m unittest discover -s plugins/pipeline/tests"""
 
+import argparse
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -418,6 +420,119 @@ class CoverageVerdictTest(unittest.TestCase):
 
         self.assertFalse(failed)
         self.assertIn("coverage: skipped", line)
+
+
+TS_SRC = """export function sign(n: number): string {
+  if (n < 0) {
+    return "neg";
+  }
+  return "pos";
+}
+"""
+
+
+def ts_report(path: Path, neg: int) -> dict:
+    """The istanbul `coverage-final.json` entry for TS_SRC: the `if` arm ran `neg` times."""
+    def loc(sl, el):
+        return {"start": {"line": sl, "column": 0}, "end": {"line": el, "column": 1}}
+    return {str(path): {"path": str(path),
+                        "statementMap": {"0": loc(2, 4), "1": loc(3, 3), "2": loc(5, 5)}, "s": {"0": 1, "1": neg, "2": 1},
+                        "branchMap": {"0": {"type": "if", "loc": loc(2, 4), "locations": [loc(2, 4), loc(2, 4)]}},
+                        "b": {"0": [neg, 1]},
+                        "fnMap": {"0": {"name": "sign", "loc": loc(1, 6)}}, "f": {"0": 1}}}
+
+
+class TsCoverageTest(unittest.TestCase):
+    """A `ts` surface's test step writes istanbul json through `{cover}`, judged like the Go profile."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        git(self.root, "init", "-q")
+        repo_fixture.install(self.root, profile=False)
+        git(self.root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+        self.base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, capture_output=True, text=True,
+                                   check=True).stdout.strip()
+        self.reports = self.root / "out"
+        self.reports.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def source(self, rel: str) -> Path:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(TS_SRC)
+        return path
+
+    def verdict(self, report: dict | None, narrowed: str | None = None) -> tuple[bool, str]:
+        if report is not None:
+            (self.reports / "coverage-final.json").write_text(json.dumps(report))
+        return check.coverage_verdict(self.root, "app", self.reports, self.base, check.snapshot(self.root), narrowed,
+                                      language="ts")
+
+    def test_no_report_fails_and_names_the_missing_placeholder(self):
+        failed, line = self.verdict(None)
+
+        self.assertTrue(failed)
+        self.assertIn("coverage: FAILED", line)
+        self.assertIn("{cover}", line)
+
+    def test_a_filtered_run_is_skipped_even_without_a_report(self):
+        failed, line = self.verdict(None, "sign.test")
+
+        self.assertFalse(failed)
+        self.assertIn("coverage: skipped", line)
+
+    def test_a_changed_arm_no_test_runs_fails_and_names_it(self):
+        path = self.source("frontend/packages/app/src/sign.ts")
+
+        failed, line = self.verdict(ts_report(path, 0))
+
+        self.assertTrue(failed)
+        self.assertIn("frontend/packages/app/src/sign.ts:2-4", line)
+
+    def test_a_tested_change_passes(self):
+        path = self.source("frontend/packages/app/src/sign.ts")
+
+        self.assertEqual((False, "coverage: ok"), self.verdict(ts_report(path, 2)))
+
+    def test_another_workspace_the_tests_import_is_not_judged(self):
+        path = self.source("frontend/packages/shared/src/sign.ts")
+
+        self.assertEqual((False, "coverage: ok"), self.verdict(ts_report(path, 0)))
+
+    def test_a_test_file_and_generated_code_are_not_judged(self):
+        report = {**ts_report(self.source("frontend/packages/app/src/sign.test.ts"), 0),
+                  **ts_report(self.source("frontend/packages/genapi/src/sign.ts"), 0)}
+
+        self.assertEqual((False, "coverage: ok"), self.verdict(report))
+
+    def phase_test_step(self, **given):
+        args = argparse.Namespace(**{"go": None, "ts": "app", "filter": None, "run": None, **given})
+        checks = check.phase_checks(self.root, args, self.reports / "cover.out", self.reports / "ts")
+        return next(cmd for name, cmd, _, language in checks if name == "test" and language == "ts")
+
+    def test_cover_makes_the_ts_test_step_write_the_json_report(self):
+        cmd = self.phase_test_step()
+
+        self.assertIn("--coverage.enabled", cmd)
+        self.assertIn("--coverage.reporter=json", cmd)
+        self.assertIn(f"--coverage.reportsDirectory={self.reports / 'ts'}", cmd)
+
+    def test_a_filter_leaves_coverage_off(self):
+        cmd = self.phase_test_step(filter="sign.test")
+
+        self.assertFalse([a for a in cmd if a.startswith("--coverage")], cmd)
+        self.assertIn("sign.test", cmd)
+
+
+class PhaseArgsTest(unittest.TestCase):
+    def test_base_overrides_the_pending_runs_base(self):
+        # `pipeline.py next` runs phase after the run is recorded, when nothing is pending any more.
+        args = check.parser().parse_args(["phase", "--ts", "app", "--base", "abc123"])
+
+        self.assertEqual("abc123", args.base)
 
 
 if __name__ == "__main__":

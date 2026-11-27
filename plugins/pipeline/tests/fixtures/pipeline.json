@@ -109,7 +109,7 @@
       "phase": [
         {"name": "tsc", "command": ["npx", "tsc", "-b", "--noEmit", "--force"]},
         {"name": "lint", "command": ["npx", "eslint", "packages/{workspace}"]},
-        {"name": "test", "command": ["npm", "test", "-w", "@content-buddy/{workspace}", "--", "--run", "{filter}"]}
+        {"name": "test", "command": ["npm", "test", "-w", "@content-buddy/{workspace}", "--", "--run", "{cover}", "{filter}"]}
       ],
       "test_one": ["npx", "vitest", "run", "{workspace_file}", "-t", "{pattern}"],
       "test_related": ["npx", "--no-install", "vitest", "related", "{workspace_file}", "--run"],

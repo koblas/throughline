@@ -106,6 +106,19 @@ class ProductRepoTest(Repo):
         self.assertIn("{run}", test)
         self.assertIn(["go", "test", "./..."], [g["command"] for g in go.full_gates])
 
+    def test_the_ts_test_phase_writes_the_coverage_report_the_check_reads(self):
+        self.files(PRODUCT, "--yes")
+
+        web = pipeline_config.load(self.root).surface("web")
+        test = next(p["command"] for p in web.phase if p["name"] == "test")
+
+        self.assertEqual(["npx", "vitest", "run", "{cover}"], test)
+        self.assertIn(["npx", "vitest", "run"], [g["command"] for g in web.full_gates])
+
+    def test_an_npm_script_gets_the_coverage_flags_past_its_separator(self):
+        self.assertEqual(["npm", "test", "--", "{cover}"], nr.phase_test("ts", ["npm", "test"]))
+        self.assertEqual(["npm", "test", "--", "--run", "{cover}"], nr.phase_test("ts", ["npm", "test", "--", "--run"]))
+
     def test_it_enables_the_shared_plugin_and_ignores_run_output(self):
         self.files(PRODUCT, "--yes")
 
