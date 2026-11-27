@@ -16,7 +16,8 @@ Three modes:
   hook   PostToolUse hook on Edit|Write|MultiEdit (wired in the plugin's hooks/hooks.json). Reads the
          hook JSON on stdin. A Go file (outside go/gen/) is gofmt'd in place and its package
          vetted (`go vet` compiles tests too); a TS/TSX file under frontend/ is prettier'd in
-         place. Silent on success. On failure: exit 2 with at most 50 lines on stderr, which
+         place. A docs/product/*.md file has its not-built marks checked offline (each names
+         an issue; `scripts/not-built.py --offline`). Silent on success. On failure: exit 2 with at most 50 lines on stderr, which
          Claude Code feeds back to the agent that made the edit. A missing tool (go, npx) is
          reported the same way, once per session, so silence never means "did not run".
 
@@ -134,6 +135,20 @@ def format_steps(root: Path, rel: str) -> tuple[str, list[tuple[str, list[str], 
     return None
 
 
+def not_built_hook(root: Path, rel: str) -> int:
+    """A product-spec edit: every not-built mark in the file names an issue (`not-built.py --offline`).
+
+    Format only: whether the issue is open needs GitHub, which CI and `next` ask."""
+    loader = importlib.util.spec_from_file_location("not_built", HERE / "not-built.py")
+    nb = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(nb)
+    wrong = nb.problems([m for m in nb.marks(root) if m[0] == rel], None)
+    if not wrong:
+        return 0
+    print("not-built:\n" + "\n".join(wrong), file=sys.stderr)
+    return 2
+
+
 def hook() -> int:
     try:
         event = json.load(sys.stdin)
@@ -146,6 +161,8 @@ def hook() -> int:
     except ValueError:
         return 0
     session = re.sub(r"\W", "", str(event.get("session_id") or os.getppid()))
+    if rel.parts[:2] == ("docs", "product") and rel.suffix == ".md":
+        return not_built_hook(root, rel.as_posix())
     try:
         found = format_steps(root, rel.as_posix())
     except pc.ConfigError as why:

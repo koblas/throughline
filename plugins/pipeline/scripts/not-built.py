@@ -14,6 +14,10 @@ Usage (from anywhere in the repo):
   scripts/not-built.py --open 12,40     # open issue numbers given, no network
   scripts/not-built.py --offline        # format only: every mark names an issue
 Exit status: 0 ok, 1 a mark is wrong, 2 the open issues could not be read.
+
+Where it runs: in CI on every pull request (the template `/pipeline:new-repo` writes), offline in
+the post-edit hook on a docs/product/ file (`check.py hook`), and through `marks()` in
+`pipeline.py next`, which names the marks a sub-issue it just closed leaves stale.
 """
 
 from __future__ import annotations
