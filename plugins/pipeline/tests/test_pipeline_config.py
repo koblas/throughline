@@ -332,6 +332,44 @@ class TwoRootsTest(unittest.TestCase):
         self.assertEqual((second.returncode, second.stderr), (0, ""))
 
 
+class NotBuiltHookTest(unittest.TestCase):
+    """The edit hook checks a product-spec file's not-built marks as it is written, without the network."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = git_repo(Path(self.tmp.name) / "repo")
+        repo_fixture.install(self.repo, profile=False)
+        (self.repo / "docs" / "product").mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hook(self, rel, text):
+        (self.repo / rel).write_text(text)
+        event = json.dumps({"tool_input": {"file_path": str(self.repo / rel)}, "session_id": f"nb{os.getpid()}"})
+        env = {k: v for k, v in os.environ.items() if k != "PATH"} | {"PATH": "/usr/bin:/bin"}  # no gh
+        return subprocess.run([sys.executable, str(SCRIPTS / "check.py"), "hook"], cwd=self.repo, input=event,
+                              capture_output=True, text=True, env=env)
+
+    def test_a_mark_naming_no_issue_is_reported_on_the_edit(self):
+        out = self.hook("docs/product/a.md", "# A\n\n- Owners can unshare. (not built)\n")
+
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("docs/product/a.md:3: `(not built)` names no issue", out.stderr)
+
+    def test_a_mark_naming_an_issue_passes_without_asking_github(self):
+        out = self.hook("docs/product/a.md", "# A\n\n- Owners can unshare. (not built: #4)\n")
+
+        self.assertEqual((out.returncode, out.stderr), (0, ""))
+
+    def test_a_bad_mark_in_another_product_file_is_not_this_edits(self):
+        (self.repo / "docs" / "product" / "b.md").write_text("- x (not built)\n")
+
+        out = self.hook("docs/product/a.md", "# A\n")
+
+        self.assertEqual((out.returncode, out.stderr), (0, ""))
+
+
 class AgentNamesTest(unittest.TestCase):
     def test_the_plugins_agents_are_namespaced_and_the_repos_are_not(self):
         self.assertEqual(pc.agent("developer"), "pipeline:developer")

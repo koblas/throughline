@@ -1355,6 +1355,19 @@ def close_scenario_issue(root: Path, spec_dir: Path, unit: str, s: dict) -> None
         return
     s["issue_closed"] = True
     print(f"note: {unit} is done — closed its sub-issue #{block['issue']}\n")
+    stale = [f"{rel}:{n}" for rel, n, issues in not_built_marks(root) if block["issue"] in issues]
+    if stale:
+        print(f"note: the product spec still marks #{block['issue']} not built — remove each mark in this "
+              "change (not-built fails on a mark naming a closed issue):\n"
+              + "\n".join(f"- {where}: still marks #{block['issue']} not built" for where in stale) + "\n")
+
+
+def not_built_marks(root: Path) -> list[tuple[str, int, list[int]]]:
+    """Every `(not built: #N)` mark under docs/product/ (`scripts/not-built.py`)."""
+    loader = importlib.util.spec_from_file_location("not_built", HERE / "not-built.py")
+    nb = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(nb)
+    return nb.marks(root)
 
 
 def section(text: str, heading: str) -> str | None:

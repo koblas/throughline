@@ -123,6 +123,26 @@ class SubIssueTest(V4Feature):
         self.assertIn("closed its sub-issue #3", out)
         self.assertTrue(self.state()["scenarios"]["SCENARIO-02"]["issue_closed"])
 
+    def test_closing_a_sub_issue_names_the_product_spec_marks_it_leaves_stale(self):
+        self.cut_off_after_writing_the_second()
+        product = self.root / "docs" / "product"
+        product.mkdir(parents=True, exist_ok=True)
+        (product / "sharing.md").write_text("# Sharing\n\n- Owners can unshare. (not built: #3)\n"
+                                             "- Owners can transfer. (not built: #9)\n")
+
+        _, out = self.next()
+
+        self.assertIn("closed its sub-issue #3", out)
+        self.assertIn("docs/product/sharing.md:3: still marks #3 not built", out)
+        self.assertNotIn("#9", out)
+
+    def test_closing_a_sub_issue_with_no_mark_naming_it_says_nothing_more(self):
+        self.cut_off_after_writing_the_second()
+
+        _, out = self.next()
+
+        self.assertNotIn("still marks", out)
+
     def test_a_close_that_fails_is_said_and_tried_again_on_the_next_call(self):
         self.cut_off_after_writing_the_second()
         pl.CLOSE_ISSUE = lambda root, n, comment: "HTTP 502"
