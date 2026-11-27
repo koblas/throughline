@@ -91,6 +91,7 @@ def _sibling(name: str, file: str):
 
 
 cfg = _sibling("pipeline_config", "pipeline_config.py")
+adapters = _sibling("adapters", "adapters.py")
 ConfigError = cfg.ConfigError
 here, brief, agent, script = cfg.here, cfg.brief, cfg.agent, cfg.script
 PLAN_HEADERS = ("Size", "Cadence", "Acceptance test", "Narrow loop", "Mutation checks")
@@ -614,7 +615,7 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
                  if s.test_reviewer in triggered and production(s, files) else "" for s in c.surfaces}
     absent = {s.name: absence_only(root, old, post, s.name) if s.test_reviewer in triggered else ""
               for s in c.surfaces}
-    go_production = any(production(s, files) for s in c.surfaces if s.language == "go")
+    go_production = any(production(s, files) for s in c.surfaces if adapters.adapter_for(root, s).races)
     check = subprocess.run([str(HERE / "spec-check.py"), "--run", slug], cwd=root, capture_output=True, text=True)
     problems = [l for l in check.stdout.splitlines() if l.startswith(slug)] if check.returncode else []
     tag = tag_line("review", unit, slug)
@@ -2296,38 +2297,26 @@ MAX_PHASE_FIX_RUNS = 2
 
 def phase_targets(root: Path, base: str, to: str) -> dict[str, list[str]]:
     """What `check.py phase` runs on, by surface name, for the production or test files changed between
-    `base` and `to` (deleted files and the `generated_roots` left out): the Go packages of the first `go`
-    surface, the TS workspace names of the first `ts` surface, and the changed files of each surface in a
-    repo-supplied language. A surface with nothing changed, or no `phase` steps, is left out."""
+    `base` and `to` (deleted files and the `generated_roots` left out): each surface's adapter names the
+    target of a changed file (a Go package, a TS workspace, the file itself). A surface with nothing
+    changed, or no `phase` steps, is left out."""
     conf = config(root)
     changed = [rel for rel in sh(root, "git", "diff", "--name-only", "--diff-filter=d", base, to).split()
                if not (conf.generated_roots and rel.startswith(conf.generated_roots))]
-    go, ts = conf.language("go"), conf.language("ts")
     out: dict[str, set[str]] = {}
-    for s in conf.surfaces:
-        if not s.phase or (s.kind == "go" and s is not go) or (s.kind == "ts" and s is not ts):
-            continue
+    for s in (s for s in conf.surfaces if s.phase):
+        adapter = adapters.adapter_for(root, s)
         for rel in (r for r in changed if s.is_production(r) or s.is_test(r)):
-            if s.kind == "go":
-                parent = Path(s.rel(rel)).parent.as_posix()
-                out.setdefault(s.name, set()).add("./" if parent == "." else f"./{parent}/")
-            elif s.kind == "ts":
-                if ws := s.workspace(rel):
-                    out.setdefault(s.name, set()).add(Path(ws).name)
-            else:
-                out.setdefault(s.name, set()).add(rel)
+            if (target := adapter.phase_target(rel)) is not None:
+                out.setdefault(s.name, set()).add(target)
     return {name: sorted(targets) for name, targets in out.items()}
 
 
 def phase_argvs(root: Path, targets: dict[str, list[str]]) -> list[list[str]]:
-    """The `check.py phase` arguments for `targets`: `--go` once, `--ts` once per workspace, `--surface` once
-    per surface in a repo-supplied language."""
-    argvs: list[list[str]] = []
-    for name, found in targets.items():
-        kind = config(root).surface(name).kind
-        argvs += ([["--go", *found]] if kind == "go" else [["--ts", w] for w in found] if kind == "ts"
-                  else [["--surface", name, *found]])
-    return argvs
+    """The `check.py phase --surface` arguments for `targets`, as each surface's adapter splits them (a TS
+    surface runs once per workspace)."""
+    return [argv for name, found in targets.items()
+            for argv in adapters.adapter_for(root, config(root).surface(name)).phase_argvs(found)]
 
 
 def run_phase(root: Path, base: str, targets: dict[str, list[str]]) -> tuple[bool, str]:
