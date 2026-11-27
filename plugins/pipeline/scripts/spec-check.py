@@ -28,7 +28,9 @@ A specification carries `<!-- spec-check: v4 -->`; one without it fails.
   8. With --approval, run once, right after the approved spec is written (the code moves under
      it afterwards):
      every `path:line` it cites exists and reaches that line, every cited repo path exists unless
-     its line calls it new, and every `error` case's Expect names an outcome the user or caller
+     its line calls it new, every symbol cited beside its file (`path` `Name`, `path:12` `Name`,
+     `path:Name`) is a whole word in that file (`cited_symbol_problems` says what is not judged),
+     and every `error` case's Expect names an outcome the user or caller
      gets — quoted copy, a copy constant, a wire code or HTTP status, `unchanged`, or `n/a — <why>`.
      Then copy coverage against the product spec the `**Area**:` line names
      (docs/product/<area>.md): every quoted string and every backticked snake_case wire code in an
@@ -40,6 +42,13 @@ A specification carries `<!-- spec-check: v4 -->`; one without it fails.
      (the `copy_sources` of the repo's .claude/pipeline.json; generated code and node_modules skipped).
      Copy nobody ruled on and spec claims the code contradicts are the two largest sources of
      rework the retros measure.
+  9. The approval record: when every check of an `--approval` run passes, it writes
+        **Approved**: <YYYY-MM-DD> scenarios <digest>
+     as the last line of `## Intent and out of scope` (replacing an older one). The digest is of
+     the `## Scenarios` section without the `Issue:` and `Acceptance test:` lines the pipeline adds
+     later (`scenario_digest`). `pipeline.py open-issues` and a build's first `pipeline.py next`
+     refuse a spec with no such line, or whose scenarios changed since it was written
+     (`approval_problems`). Never write the line by hand.
 
 Usage (from anywhere in the repo):  scripts/spec-check.py [--run] [--approval] <feature-slug> [...]
 Exit status is non-zero if any check fails.
@@ -48,6 +57,8 @@ Exit status is non-zero if any check fails.
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import importlib.util
 import os
 import re
@@ -281,14 +292,68 @@ WIRE_RE = re.compile(r"\b[45]\d\d\b|\b[a-z]+(?:_[a-z]+)+\b|\b(?:" + "|".join(CON
 CASE_ID_RE = re.compile(r"\d+[a-z]?\.\d+")
 
 
+def resolve(cite: str, tracked: list[str]) -> list[str]:
+    """The tracked files a cited path names: a bare or partial path is any file ending in it; a one-letter
+    alias root (`O/recover.go`) or `.../` resolves by what follows it."""
+    tail = ALIAS_RE.sub("", cite)
+    if tail == cite:
+        return [t for t in tracked if t == cite or t.endswith("/" + cite)]
+    return [t for t in tracked if t.endswith("/" + tail)]
+
+
+_PATH = r"((?:[\w.@-]+/)*[\w.@-]+\.(?:go|tsx?|jsx?|proto|py|ya?ml|sql|json|md))"
+_NAME = r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*"
+# A symbol cited with its file: `path` `Name` (the path may carry `:line`), or `path:Name` in one span.
+SYMBOL_RES = (re.compile(rf"`{_PATH}(?::\d+(?:-\d+)?)?`[ \t]+`({_NAME})`"), re.compile(rf"`{_PATH}:({_NAME})`"))
+# A second span that is itself a file name (`recover.go` `refresh.go`) names no symbol.
+FILE_NAME_RE = re.compile(r"\.(?:go|tsx?|jsx?|mjs|proto|py|ya?ml|sql|json|md|mjml|html|css|txt)$")
+
+
+def cited_symbol_problems(root: Path, text: str, tracked: list[str]) -> list[str]:
+    """--approval: every symbol cited beside its file — `path` `Name`, `path:12` `Name` or `path:Name` —
+    appears in that file as a whole word (for `Type.Method`, its last part).
+
+    Conservative by design, since a false refusal blocks approval: a symbol with no file beside it, a
+    second span that is not a bare name (a test title, quoted copy, a code fragment), a file that
+    resolves to no tracked file (the path check's business), a line that calls it new, a case-table
+    row (an Expect cell may name copy the build adds) and an `Acceptance test:` line (check 4) are
+    not judged. A word match is not a definition: a name that is only used in the file passes.
+    """
+    problems: list[str] = []
+    sources: dict[str, str] = {}
+
+    def source(path: str) -> str:
+        if path not in sources:
+            try:
+                sources[path] = (root / path).read_text(errors="replace")
+            except OSError:
+                sources[path] = ""
+        return sources[path]
+
+    for line in text.splitlines():
+        bare = line.strip()
+        if bare.startswith(("|", "Acceptance test:")) or re.search(r"\bnew\b", line, re.I):
+            continue
+        for m in (m for r in SYMBOL_RES for m in r.finditer(line)):
+            cite, name = m.group(1), m.group(2)
+            files = resolve(cite, tracked)
+            if FILE_NAME_RE.search(name) or not files:
+                continue
+            word = re.compile(rf"(?<![\w$]){re.escape(name.rsplit('.', 1)[-1])}(?![\w$])")
+            if not any(word.search(source(f)) for f in files):
+                problems.append(f"cites `{name}` in `{files[0] if len(files) == 1 else cite}`, which does not contain "
+                                "it — fix the citation, or say on its line that it is new")
+    return problems
+
+
 def cited_path_problems(root: Path, text: str, tracked: list[str]) -> list[str]:
     """--approval: every `path:line` the spec cites exists and reaches that line; every cited
     repo path (one with a `/`) exists unless its line calls it new.
 
     A bare or partial path resolves to any tracked file ending in it; a one-letter alias root
-    (`O/recover.go`) or `.../` resolves by what follows it. Not checked: symbols, bare names
-    without a line, paths under the gitignored codegen roots, and line numbers that exist but
-    now hold something else.
+    (`O/recover.go`) or `.../` resolves by what follows it. Not checked: bare names without a
+    line, paths under the gitignored codegen roots, and line numbers that exist but now hold
+    something else. Symbols cited beside a path are `cited_symbol_problems`'.
     """
     problems: list[str] = []
     lengths: dict[str, int] = {}
@@ -307,20 +372,56 @@ def cited_path_problems(root: Path, text: str, tracked: list[str]) -> list[str]:
             cite, start, end = m.group(1), m.group(2), m.group(3)
             if not start and ("/" not in cite or re.search(r"\bnew\b", line, re.I)):
                 continue
-            tail = ALIAS_RE.sub("", cite)
-            if tail == cite:
-                found = [t for t in tracked if t == cite or t.endswith("/" + cite)]
-            else:
-                found = [t for t in tracked if t.endswith("/" + tail)]
+            found = resolve(cite, tracked)
             if not found and generated and cite.startswith(generated):
                 continue
             if not found:
-                problems.append(f"cites `{m.group(0).strip('`')}` but no tracked file ends in `{tail}`")
+                problems.append(f"cites `{m.group(0).strip('`')}` but no tracked file ends in `{ALIAS_RE.sub('', cite)}`")
                 continue
             last = int(end or start or 0)
             if last and not any(length(f) >= last for f in found):
                 problems.append(f"cites `{m.group(0).strip('`')}` but `{found[0]}` has {length(found[0])} lines")
     return problems
+
+
+APPROVED_RE = re.compile(r"^\*\*Approved\*\*:\s*(\d{4}-\d{2}-\d{2})\s+scenarios\s+([0-9a-f]{16})\s*$", re.M)
+# Lines the pipeline itself writes into a scenario block after approval: they are not what was approved.
+AFTER_APPROVAL_RE = re.compile(r"^(?:Issue|Acceptance test):")
+
+
+def scenario_digest(text: str) -> str:
+    """A digest of what the user approved: the `## Scenarios` section, each line stripped, blank lines and
+    the `Issue:` / `Acceptance test:` lines the pipeline writes later left out."""
+    m = re.search(r"^## Scenarios[ \t]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    lines = [l.strip() for l in (m.group(1) if m else "").splitlines()]
+    kept = "\n".join(l for l in lines if l and not AFTER_APPROVAL_RE.match(l))
+    return hashlib.sha256(kept.encode()).hexdigest()[:16]
+
+
+def stamped(text: str, day: str) -> str:
+    """The spec with its `**Approved**: <day> scenarios <digest>` line: the one there replaced, else added
+    as the last line of `## Intent and out of scope`."""
+    line = f"**Approved**: {day} scenarios {scenario_digest(text)}"
+    if APPROVED_RE.search(text):
+        return APPROVED_RE.sub(lambda _: line, text, count=1)
+    lines = text.splitlines()
+    at = next((i for i, l in enumerate(lines) if l.strip() == "## Decisions"), len(lines))
+    while at > 0 and not lines[at - 1].strip():
+        at -= 1
+    return "\n".join([*lines[:at], "", line, *lines[at:]]) + "\n"
+
+
+def approval_problems(text: str) -> list[str]:
+    """Why a spec is not approved: no `**Approved**:` line (it never passed `--approval`), or the
+    scenarios changed since that line was written."""
+    script = "spec-check.py --approval <slug>"
+    m = APPROVED_RE.search(text)
+    if not m:
+        return [f"no `**Approved**:` line — `{script}` writes it when every approval check passes"]
+    if m.group(2) != scenario_digest(text):
+        return [f"the scenarios changed since they were approved on {m.group(1)} — put the change to the user, "
+                f"then re-run `{script}`"]
+    return []
 
 
 def error_copy_problems(text: str) -> list[str]:
@@ -472,6 +573,7 @@ def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> l
     if approval:
         tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True).stdout.splitlines()
         problems += [f"{slug}: {p}" for p in cited_path_problems(root, text, tracked)]
+        problems += [f"{slug}: {p}" for p in cited_symbol_problems(root, text, tracked)]
 
     for sid, built, line in acceptance_lines(text):
         if not built:
@@ -516,7 +618,8 @@ def main() -> int:
     ap.add_argument("slugs", nargs="+", metavar="feature-slug")
     ap.add_argument("--run", action="store_true", help="also run each named acceptance test")
     ap.add_argument("--approval", action="store_true",
-                    help="also check cited paths exist and every error case rules its copy (at spec approval)")
+                    help="also check cited paths and symbols exist and every error case rules its copy, and on "
+                         "success write the spec's `**Approved**:` line (at spec approval)")
     args = ap.parse_args()
     root = repo_root()
     try:
@@ -530,6 +633,14 @@ def main() -> int:
         print(f"spec-check: {len(problems)} problem(s)", file=sys.stderr)
         return 1
     print(f"spec-check: {', '.join(args.slugs)} OK")
+    if args.approval:
+        today = datetime.date.today().isoformat()
+        for slug in args.slugs:
+            spec = root / "docs" / "specs" / f"{slug}.md"
+            text = spec.read_text()
+            if approval_problems(text):  # a spec already approved on these scenarios keeps its date
+                spec.write_text(stamped(text, today))
+                print(f"spec-check: {slug} approved — `**Approved**:` written to {spec.relative_to(root)}")
     return 0
 
 
