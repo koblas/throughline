@@ -405,6 +405,27 @@ class RepoPhaseStepTest(unittest.TestCase):
         self.assertEqual(step, ([".claude/scripts/allowlist.py", "--base", "abc123", "--to", "def456"], self.root))
 
 
+class CheckTimeLogTest(unittest.TestCase):
+    def test_each_check_is_appended_as_one_json_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            check.log_time(root, "hook", "go", 1.23456, True, "go/a.go")
+            check.log_time(root, "phase", "test", 9.0, False)
+
+            lines = [json.loads(l) for l in (root / ".runs" / "check-times.jsonl").read_text().splitlines()]
+
+        self.assertEqual([(l["mode"], l["check"], l["seconds"], l["ok"]) for l in lines],
+                         [("hook", "go", 1.235, True), ("phase", "test", 9.0, False)])
+        self.assertEqual(lines[0]["path"], "go/a.go")
+        self.assertNotIn("path", lines[1])
+
+    def test_a_log_it_cannot_write_is_skipped_without_failing_the_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "file"
+            blocker.write_text("")
+            check.log_time(blocker, "hook", "go", 1.0, True)  # .runs cannot be made under a file
+
+
 class PhaseArgsTest(unittest.TestCase):
     def test_base_overrides_the_pending_runs_base(self):
         # `pipeline.py next` runs phase after the run is recorded, when nothing is pending any more.

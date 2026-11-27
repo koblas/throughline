@@ -50,12 +50,18 @@ Three modes:
          runs phase on a finished scenario, after its run is no longer pending).
          Prints one line per check (`ok` + test count, or the failure capped at 50 lines).
 
+Every mode also appends its wall-clock time to `.runs/check-times.jsonl` at the repo root (one JSON
+line: when, mode, check, seconds, ok, path): the hook once per edit it formats or vets, phase once per
+check. `scripts/feature-metrics.py` sums them for a feature, so the time the
+checks cost shows up beside the token ledger. A line that cannot be written is skipped silently.
+
 Usage (from anywhere in the repo): see above. Exit status is non-zero if any check failed.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import importlib.util
 import json
 import os
@@ -64,6 +70,7 @@ import shutil
 import tempfile
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CAP = 50
@@ -107,6 +114,22 @@ def go_root(root: Path) -> str:
 def repo_root() -> Path:
     out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     return Path(out.stdout.strip()) if out.returncode == 0 else Path.cwd()
+
+
+TIMES_FILE = Path(".runs") / "check-times.jsonl"  # relative to the repo root; gitignored run output
+
+
+def log_time(root: Path, mode: str, check: str, seconds: float, ok: bool, path: str = "") -> None:
+    """Append one check's wall-clock time to the repo's `.runs/check-times.jsonl`. Never raises."""
+    try:
+        out = root / TIMES_FILE
+        out.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "mode": mode,
+                 "check": check, "seconds": round(seconds, 3), "ok": ok, **({"path": path} if path else {})}
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
 
 
 def capped(text: str) -> str:
@@ -200,11 +223,13 @@ def hook() -> int:
             return 2
         return 0
     failures: list[str] = []
+    started = time.monotonic()
     for label, cmd, cwd, timeout in steps:
         ok, out = run(cmd, cwd, timeout)
         if not ok:
             failures.append(f"{label}:\n{out}")
             break  # a step that failed leaves nothing sound for the next (gofmt before vet)
+    log_time(root, "hook", tool, time.monotonic() - started, not failures, rel.as_posix())
     if not failures:
         return 0
     print(capped("\n".join(failures)), file=sys.stderr)
@@ -659,7 +684,9 @@ def _phase(args: argparse.Namespace, profile: Path, ts_report: Path, report: Pat
         else:
             print(f"{name}: ok")
     for name, cmd, cwd, language in checks:
+        started = time.monotonic()
         ok, out = run(cmd, cwd)
+        log_time(root, "phase", name, time.monotonic() - started, ok)
         if name == "tidy" and not ok and ENV_FAILURE_RE.search(out):
             # The module graph needs a download the sandbox refuses: not a go.mod finding.
             print("tidy: skipped (module cache or network unavailable here; the runner and CI check it)")

@@ -133,6 +133,8 @@ class PhaseTest(AdapterRepo):
         self.assertIn("absence-python: ok", out.stdout)
         self.assertIn("test: ok", out.stdout)
         self.assertIn("coverage: ok", out.stdout)
+        logged = [json.loads(l) for l in (self.root / ".runs" / "check-times.jsonl").read_text().splitlines()]
+        self.assertEqual([(l["mode"], l["check"], l["ok"]) for l in logged], [("phase", "test", True)])
 
     def test_a_changed_line_no_test_runs_fails_and_is_named(self):
         self.change("def greet():\n    return 'hello'  # run\n\ndef wave():\n    return 'bye'\n")
