@@ -111,11 +111,14 @@ def command(text: str, where: str) -> list[str]:
 
 
 def phase_test(lang: str, given: list[str]) -> list[str]:
-    """The `phase` test step. For Go it is the packages `check.py phase` names, with `{cover}`, so the
-    diff-coverage check has a profile to read; the answer's own command stays the full gate."""
+    """The `phase` test step, with `{cover}` so the diff-coverage check has a report to read; the answer's
+    own command stays the full gate. Go: the packages `check.py phase` names. TS: the answer's command
+    (vitest) with the coverage flags, past the `--` an npm script needs to hand them on."""
     if lang == "go":
         return ["go", "test", "-count=1", "{cover}", "{packages}", "{run}"]
-    return given
+    if given[0] == "npm" and "--" not in given:
+        return [*given, "--", "{cover}"]
+    return [*given, "{cover}"]
 
 
 def surface(name: str, raw: dict) -> dict:

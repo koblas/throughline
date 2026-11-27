@@ -1,4 +1,4 @@
-"""diff-coverage.py: which zero-count Go blocks on changed lines are reported."""
+"""diff-coverage.py: which zero-count Go blocks, and TS statements / arms / functions, on changed lines are reported."""
 import importlib.util
 import shutil
 import subprocess
@@ -111,6 +111,132 @@ class UncoveredTest(unittest.TestCase):
         self.dirs = {}
 
         self.assertEqual(self.found({5}), [])
+
+
+TS_SRC = """export function sign(n: number): string {
+  if (n < 0) {
+    return "neg";
+  }
+  return n === 0 ? "zero" : "pos";
+}
+export function unused(): number {
+  return 1;
+}
+"""
+
+
+def loc(sl, sc, el, ec):
+    return {"start": {"line": sl, "column": sc}, "end": {"line": el, "column": ec}}
+
+
+def istanbul(path, s=(1, 0, 1, 0), b=((0, 1), (0, 2)), f=(1, 0), shift=0):
+    """The `coverage-final.json` entry vitest's json reporter writes for TS_SRC, with these hit counts.
+
+    Statements: the `if` (2-4), its `return "neg"` (3), the ternary return (5), `unused`'s return (8).
+    Branches: the `if` (istanbul gives both its locations the whole statement) and the ternary's arms.
+    Functions: `sign` (1-6) and `unused` (7-9). `shift` moves `unused` down that many lines.
+    """
+    u = shift
+    return {str(path): {
+        "path": str(path),
+        "statementMap": {"0": loc(2, 2, 4, 3), "1": loc(3, 4, 3, 17), "2": loc(5, 2, 5, 34),
+                         "3": loc(8 + u, 2, 8 + u, 11)},
+        "s": {str(i): n for i, n in enumerate(s)},
+        "branchMap": {
+            "0": {"type": "if", "line": 2, "loc": loc(2, 2, 4, 3), "locations": [loc(2, 2, 4, 3), loc(2, 2, 4, 3)]},
+            "1": {"type": "cond-expr", "line": 5, "loc": loc(5, 9, 5, 33),
+                  "locations": [loc(5, 21, 5, 27), loc(5, 30, 5, 35)]},
+        },
+        "b": {str(i): list(n) for i, n in enumerate(b)},
+        "fnMap": {"0": {"name": "sign", "decl": loc(1, 16, 1, 20), "loc": loc(1, 0, 6, 1), "line": 1},
+                  "1": {"name": "unused", "decl": loc(7 + u, 16, 7 + u, 22), "loc": loc(7 + u, 0, 9 + u, 1),
+                        "line": 7 + u}},
+        "f": {str(i): n for i, n in enumerate(f)},
+    }}
+
+
+class UncoveredTsTest(unittest.TestCase):
+    """The istanbul reader: changed lines inside a statement, branch arm or function that ran zero times."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.file = self.root / "web" / "src" / "sign.ts"
+        self.file.parent.mkdir(parents=True)
+        self.write(TS_SRC)
+
+    def write(self, src):
+        self.file.write_text(src)
+
+    def found(self, changed, report=None, judged=lambda rel: True, generated=("web/gen/",)):
+        report = istanbul(self.file) if report is None else report
+        return dc.uncovered_ts(self.root, report, judged, lambda rel: changed, generated)
+
+    def test_an_untested_arm_on_a_changed_line_is_reported_once(self):
+        found = self.found({3})
+
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("web/src/sign.ts:2-4:"), found[0])
+        self.assertIn("// uncovered:", found[0])
+
+    def test_a_changed_condition_counts_as_a_change_to_its_arm(self):
+        self.assertEqual(len(self.found({2})), 1)
+
+    def test_an_untaken_implicit_else_is_not_reported(self):
+        # The `if` always went into its arm: the `else` istanbul counts has no code of its own.
+        report = istanbul(self.file, s=(1, 1, 0, 0), b=((1, 0), (1, 1)), f=(1, 1))
+
+        self.assertEqual(self.found({2, 3}, report), [])
+
+    def test_an_untaken_ternary_arm_is_reported(self):
+        found = self.found({5}, istanbul(self.file, s=(1, 1, 1, 0), b=((1, 1), (0, 2))))
+
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("web/src/sign.ts:5-5:"), found[0])
+
+    def test_a_function_never_called_is_one_finding(self):
+        found = self.found({8})
+
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("web/src/sign.ts:7-9:"), found[0])
+
+    def test_an_untested_arm_the_diff_did_not_touch_is_not_reported(self):
+        self.assertEqual(self.found({1}), [])
+
+    def test_covered_code_on_a_changed_line_is_not_reported(self):
+        report = istanbul(self.file, s=(1, 1, 1, 1), b=((1, 1), (1, 1)), f=(1, 1))
+
+        self.assertEqual(self.found(set(range(1, 10)), report), [])
+
+    def test_the_marker_on_the_opening_line_exempts_the_arm(self):
+        self.write(TS_SRC.replace("if (n < 0) {", "if (n < 0) { // uncovered: callers never pass a negative"))
+
+        self.assertEqual(self.found({3}), [])
+
+    def test_the_marker_on_the_line_above_exempts_the_function_and_what_it_holds(self):
+        self.write(TS_SRC.replace("export function unused", "// uncovered: kept for the plugin API\nexport function unused"))
+
+        self.assertEqual(self.found({9}, istanbul(self.file, shift=1)), [])
+
+    def test_a_file_the_caller_does_not_judge_is_skipped(self):
+        self.assertEqual(self.found({3}, judged=lambda rel: False), [])
+
+    def test_generated_code_is_not_judged(self):
+        gen = self.root / "web" / "gen" / "sign.ts"
+        gen.parent.mkdir(parents=True)
+        gen.write_text(TS_SRC)
+
+        self.assertEqual(self.found({3}, istanbul(gen)), [])
+
+    def test_a_file_outside_the_repo_is_not_judged(self):
+        self.assertEqual(self.found({3}, istanbul(Path("/elsewhere/sign.ts"))), [])
+
+    def test_the_cover_flags_make_vitest_write_the_json_report_where_asked(self):
+        flags = dc.ts_cover_flags(Path("/tmp/x"))
+
+        self.assertIn("--coverage.enabled", flags)
+        self.assertIn("--coverage.reporter=json", flags)
+        self.assertIn("--coverage.reportsDirectory=/tmp/x", flags)
 
 
 @unittest.skipUnless(shutil.which("go"), "go not on PATH")

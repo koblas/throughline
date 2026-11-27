@@ -2151,6 +2151,68 @@ def serve_request(root: Path, state: dict) -> bool:
     return True
 
 
+# A ticked scenario is recorded done only once `check.py phase` passes on what it changed (the
+# developer's narrow loop, enforced). A failure goes back to the developer as a build run, at most
+# this many times, then stops for a person.
+MAX_PHASE_FIX_RUNS = 2
+
+
+def phase_targets(root: Path, base: str, to: str) -> tuple[list[str], list[str]]:
+    """The Go packages (`check.py phase --go`) and TS workspace names (`--ts`) whose production or test
+    files changed between `base` and `to`; deleted files and the `generated_roots` left out."""
+    conf = config(root)
+    changed = sh(root, "git", "diff", "--name-only", "--diff-filter=d", base, to).split()
+    go, ts = conf.language("go"), conf.language("ts")
+    pkgs, workspaces = set(), set()
+    for rel in changed:
+        if conf.generated_roots and rel.startswith(conf.generated_roots):
+            continue
+        if go and go.phase and (go.is_production(rel) or go.is_test(rel)):
+            parent = Path(go.rel(rel)).parent.as_posix()
+            pkgs.add("./" if parent == "." else f"./{parent}/")
+        if ts and ts.phase and (ts.is_production(rel) or ts.is_test(rel)) and (ws := ts.workspace(rel)):
+            workspaces.add(Path(ws).name)
+    return sorted(pkgs), sorted(workspaces)
+
+
+def run_phase(root: Path, base: str, go: list[str], ts: list[str]) -> tuple[bool, str]:
+    """`check.py phase --base <base>` once on the Go packages and once per TS workspace: (all passed, the output)."""
+    ok, outs = True, []
+    for argv in ([["--go", *go]] if go else []) + [["--ts", w] for w in ts]:
+        out = subprocess.run([str(HERE / "check.py"), "phase", "--base", base, *argv], cwd=root,
+                             capture_output=True, text=True)
+        ok = ok and out.returncode == 0
+        outs.append(f"$ {script('check.py')} phase {' '.join(argv)}\n{(out.stdout + out.stderr).strip()}")
+    return ok, "\n\n".join(outs)
+
+
+RUN_PHASE = run_phase  # replaced in tests: they never run go or npm
+
+
+def phase_gate(root: Path, unit: str, s: dict) -> None:
+    """Run the phase checks on what a ticked scenario changed since its pre-scenario snapshot.
+
+    A pass (or nothing to check) sets `phase_ok`; a failure sets `phase_failed` to the output, which the
+    next build run carries. Refuses once MAX_PHASE_FIX_RUNS fix runs have not made it pass.
+    """
+    base = s["pre"] or "HEAD"
+    go, ts = phase_targets(root, base, snap(root))
+    if not go and not ts:
+        s["phase_ok"] = True
+        return
+    ok, out = RUN_PHASE(root, base, go, ts)
+    what = "; ".join([*([f"--go {' '.join(go)}"] if go else []), *(f"--ts {w}" for w in ts)])
+    if ok:
+        s["phase_ok"] = True
+        print(f"note: {unit}: phase checks passed ({what})\n")
+        return
+    if s.get("phase_fix_runs", 0) >= MAX_PHASE_FIX_RUNS:
+        raise Refuse(f"the phase checks on {unit} ({what}) still fail after {s['phase_fix_runs']} fix run(s), so "
+                     f"it is not recorded done:\n{out}\nFix it, or put it to the user, then call `next` again.")
+    s["phase_failed"] = out
+    print(f"note: {unit}: phase checks failed ({what}) — it goes back to the developer\n")
+
+
 def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) -> int:
     spec_dir = spec_folder(root, slug)
     spec_text = spec_file(spec_dir).read_text()
@@ -2209,7 +2271,9 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
                   "goes back to the architect, or to the user, now.\n\nPlan accepted → `next --plan-ok`.")
             return 0
 
-        if not ticked.get(unit):
+        if ticked.get(unit) and s["checkpoint"] is None and not s.get("phase_ok") and not s.get("phase_failed"):
+            phase_gate(root, unit, s)
+        if not ticked.get(unit) or s.get("phase_failed"):
             reply_file = s.get("last_reply", "its transcript")
             if s.get("blocked"):
                 why, s["blocked"], s["stalls"] = s["blocked"], "", 0  # said once: the next call tries again
@@ -2239,11 +2303,14 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
             if s.get("acceptance_lint"):
                 covers, last = ("the lint findings in the acceptance test you wrote, listed below — nothing else: "
                                 "fix them, re-run the linter on that file, and leave every other step as it is"), False
+            if s.get("phase_failed"):
+                covers, last = (f"the phase-check failures listed below — nothing else: fix them, re-run "
+                                f"`{script('check.py')} phase` on what you touched, and leave the ticks as they are"), True
             if s["pre"] is None:
                 s["pre"] = snap(root)
             presample = ""
             built = bool(plan) and any(done for phase, _, done in plan["steps"] if phase == "Build")
-            if last and not s.get("presampled") and built:
+            if last and not s.get("presampled") and built and not s.get("phase_failed"):
                 # The mutation sample, taken before the run that ticks: its survivors were the largest class
                 # of checkpoint MAJOR, and here they cost a test, not a fix pass. Once per scenario; a
                 # checkpoint, when one runs, still samples the finished diff for the record.
@@ -2288,6 +2355,11 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
                          "```", s.pop("acceptance_lint"), "```",
                          "", f"Idioms: `{here('skills/go-testing/SKILL.md')}` → *Lint-clean test idioms*, "
                          f"`{here('skills/ui-testing/SKILL.md')}` → *Lint-clean test idioms*."]
+            if s.get("phase_failed"):
+                s["phase_fix_runs"] = s.get("phase_fix_runs", 0) + 1
+                body += ["", "## Phase checks failed — the scenario is not done until they pass", "",
+                         "`next` ran these on what the scenario changed since it started:", "",
+                         "```", s.pop("phase_failed"), "```"]
             if s.get("ran"):
                 body += ["", "## Run for you since your last run", "", s.pop("ran")]
             if s["report"]:

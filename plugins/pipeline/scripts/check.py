@@ -40,9 +40,13 @@ Three modes:
          pre-snapshot for a build run or a checkpoint fix, the pre-fix snapshot for a gate fix,
          else HEAD. Absence-only: `scripts/absence-only.py` on the tests changed since that base;
          the scenario's locked acceptance test is left out — the run cannot edit it.
-         Go, after a passing full test run (not with --run): every block the diff adds or changes
-         runs in a test of one of the packages passed (`scripts/diff-coverage.py`;
-         `// uncovered: <why>` exempts one).
+         After a passing full test run (not with --run / --filter): every Go block the diff adds or
+         changes runs in a test of one of the packages passed, and every changed TS statement, branch
+         arm and function of the workspace's own production files runs in one of its tests
+         (`scripts/diff-coverage.py`; `// uncovered: <why>` exempts one). The test step's `{cover}`
+         writes the report — a Go profile, or vitest's istanbul json — and a step without it fails.
+         `--base REF` judges "changed" against REF instead (what `pipeline.py next` passes when it
+         runs phase on a finished scenario, after its run is no longer pending).
          Prints one line per check (`ok` + test count, or the failure capped at 50 lines).
 
 Usage (from anywhere in the repo): see above. Exit status is non-zero if any check failed.
@@ -552,31 +556,55 @@ def diff_coverage(root: Path, pkgs: list[str], profile: Path, base: str, to: str
                         lambda rel: changed_lines(root, rel, base, to), pc.load(root).generated_roots)
 
 
-def coverage_verdict(root: Path, pkgs: list[str], profile: Path, base: str, to: str,
-                     run: str | None) -> tuple[bool, str]:
-    """(failed, the line to print) for the coverage of a Go test step that passed.
+def ts_diff_coverage(root: Path, workspace: str, report: Path, base: str, to: str) -> list[str]:
+    """Changed TS statements, branch arms and functions the test run never executed, in `workspace`'s own
+    production files (a sibling workspace its tests import is that workspace's run to judge)."""
+    surface = pc.load(root).language("ts")
+    data = json.loads(report.read_text())
 
-    No profile means the step's command has no `{cover}`: nothing was measured, so it fails
-    rather than reporting `coverage: ok` on an empty profile.
+    def judged(rel: str) -> bool:
+        ws = surface.workspace(rel)
+        return ws is not None and Path(ws).name == workspace and not surface.is_test(rel)
+
+    return _diff_coverage_module().uncovered_ts(root, data, judged, lambda rel: changed_lines(root, rel, base, to),
+                                                pc.load(root).generated_roots)
+
+
+def coverage_verdict(root: Path, pkgs: list[str] | str, profile: Path, base: str, to: str,
+                     run: str | None, language: str = "go") -> tuple[bool, str]:
+    """(failed, the line to print) for the coverage of a test step that passed.
+
+    Go: `pkgs` are the packages and `profile` the cover profile; `run` is the -run pattern. TS: `pkgs`
+    is the workspace, `profile` the report directory (its `coverage-final.json`), `run` the --filter.
+    No report means the step's command has no `{cover}`: nothing was measured, so it fails rather
+    than reporting `coverage: ok` on nothing.
     """
     if run:
-        return False, "coverage: skipped (--run narrows the tests; the full phase run judges it)"
-    if not profile.is_file():
-        return True, ("coverage: FAILED (the test step wrote no coverage profile: add `{cover}` to its "
-                      "`phase` command in .claude/pipeline.json)")
-    if found := diff_coverage(root, pkgs, profile, base, to):
-        return True, "coverage: FAILED (changed blocks no test runs)\n" + capped("\n".join(found))
+        flag = "--run" if language == "go" else "--filter"
+        return False, f"coverage: skipped ({flag} narrows the tests; the full phase run judges it)"
+    report = profile if language == "go" else profile / "coverage-final.json"
+    if not report.is_file():
+        return True, (f"coverage: FAILED (the test step wrote no coverage {'profile' if language == 'go' else 'report'}: "
+                      "add `{cover}` to its `phase` command in .claude/pipeline.json)")
+    found = (diff_coverage(root, pkgs, report, base, to) if language == "go"
+             else ts_diff_coverage(root, pkgs, report, base, to))
+    if found:
+        what = "blocks" if language == "go" else "code"
+        return True, f"coverage: FAILED (changed {what} no test runs)\n" + capped("\n".join(found))
     return False, "coverage: ok"
 
 
 def phase(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="check-cover.") as tmp:
-        return _phase(args, Path(tmp) / "cover.out")
+        return _phase(args, Path(tmp) / "cover.out", Path(tmp) / "ts-cover")
 
 
-def phase_checks(root: Path, args: argparse.Namespace, profile: Path) -> list[tuple[str, list[str], Path, str]]:
+def phase_checks(root: Path, args: argparse.Namespace, profile: Path,
+                 ts_report: Path | None = None) -> list[tuple[str, list[str], Path, str]]:
     """(name, command, cwd, language) for each `phase` step of the config's first `go` surface (with --go)
-    and first `ts` surface (with --ts), its placeholders filled from the arguments."""
+    and first `ts` surface (with --ts), its placeholders filled from the arguments. `{cover}` writes the
+    Go profile to `profile` and the TS istanbul json into `ts_report`; a --run / --filter leaves it empty."""
+    ts_report = ts_report or profile.parent / "ts-cover"
     config = pc.load(root)
     checks: list[tuple[str, list[str], Path, str]] = []
     for language, wanted in (("go", args.go), ("ts", args.ts)):
@@ -585,7 +613,9 @@ def phase_checks(root: Path, args: argparse.Namespace, profile: Path) -> list[tu
         surface = config.language(language)
         if surface is None or not surface.phase:
             raise pc.ConfigError(f"{config.path}: no `{language}` surface with `phase` steps for --{language}")
-        values = {"workspace": args.ts, "filter": [args.filter] if args.filter else []}
+        # A filter narrows which tests run, so the report would call untested what other tests cover.
+        values = {"workspace": args.ts, "filter": [args.filter] if args.filter else [],
+                  "cover": [] if args.filter else _diff_coverage_module().ts_cover_flags(ts_report)}
         if language == "go":
             # A -run pattern narrows which tests run, so the profile would call untested what other tests cover.
             values = {"packages": args.go, "packages/...": [p.rstrip("/") + "/..." for p in args.go],
@@ -596,19 +626,19 @@ def phase_checks(root: Path, args: argparse.Namespace, profile: Path) -> list[tu
     return checks
 
 
-def _phase(args: argparse.Namespace, profile: Path) -> int:
+def _phase(args: argparse.Namespace, profile: Path, ts_report: Path) -> int:
     root = repo_root()
     if not args.go and not args.ts:
         print("check phase: pass --go and/or --ts", file=sys.stderr)
         return 2
     try:
-        checks = phase_checks(root, args, profile)
+        checks = phase_checks(root, args, profile, ts_report)
     except pc.ConfigError as why:
         print(f"check phase: {why}", file=sys.stderr)
         return 2
     failed = False
     # One base and one snapshot for every check that reads the diff, so they judge the same change.
-    base, to = scenario_base(root), snapshot(root)
+    base, to = args.base or scenario_base(root), snapshot(root)
     diff_checks = [("doc", doc_budget(root, args.go, base, to)), ("sleep", real_sleeps(root, args.go, base, to)),
                    ("layout", test_layout(root, args.go, base, to)),
                    ("absence", absence_only(root, False, base, to))] if args.go else []
@@ -639,8 +669,9 @@ def _phase(args: argparse.Namespace, profile: Path) -> int:
                 skipped = len(re.findall(r"^\s*--- SKIP", out, re.MULTILINE))
                 count = f" — {ts.group(1).strip()}" if ts else f" — {passed} passed, {skipped} skipped (subtests included)"
             print(f"{name}: ok{count}")
-            if name == "test" and language == "go":
-                bad, line = coverage_verdict(root, args.go, profile, base, to, args.run)
+            if name == "test":
+                bad, line = (coverage_verdict(root, args.go, profile, base, to, args.run) if language == "go" else
+                             coverage_verdict(root, args.ts, ts_report, base, to, args.filter, language="ts"))
                 failed = failed or bad
                 print(line)
         else:
@@ -649,7 +680,7 @@ def _phase(args: argparse.Namespace, profile: Path) -> int:
     return 1 if failed else 0
 
 
-def main() -> int:
+def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="mode", required=True)
     sub.add_parser("hook")
@@ -659,7 +690,12 @@ def main() -> int:
     p.add_argument("--run", help="go test -run pattern")
     p.add_argument("--ts", metavar="WORKSPACE", help="workspace of the ts surface (one of its `workspaces` in .claude/pipeline.json)")
     p.add_argument("--filter", help="vitest file filter")
-    args = ap.parse_args()
+    p.add_argument("--base", help="the revision \"changed\" is judged against (default: the pending run's base)")
+    return ap
+
+
+def main() -> int:
+    args = parser().parse_args()
     return hook() if args.mode == "hook" else lock() if args.mode == "lock" else phase(args)
 
 

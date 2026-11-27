@@ -144,6 +144,11 @@ class Feature(unittest.TestCase):
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             return real_run(cmd, *a, **kw)
         pl.subprocess.run = run
+        # The phase checks `next` runs on a built scenario: recorded and passing, never go or npm.
+        self.phase_calls, self.phase_says = [], []
+        self.real_phase = pl.RUN_PHASE
+        pl.RUN_PHASE = lambda root, base, go, ts: (self.phase_calls.append((base, go, ts))
+                                                   or (self.phase_says.pop(0) if self.phase_says else (True, "")))
         (pl.runs_of(self.spec_dir) / "METRICS.md").write_text(METRICS)
         git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
         subprocess.run([*git, "init", "-q", str(self.root)], check=True)
@@ -160,6 +165,7 @@ class Feature(unittest.TestCase):
 
     def tearDown(self):
         pl.ISSUE_STATES, pl.subprocess.run = self.real
+        pl.RUN_PHASE = self.real_phase
         pl.OWN_AGENTS = self.own_agents
         os.chdir(self.cwd)
         self.tmp.cleanup()
@@ -915,6 +921,100 @@ class NextTest(Feature):
         self.assertIn("run: build unit: SCENARIO-02 feature: demo size: small", out)
         self.assertIn("| SCENARIO-01 | large | 4 batches, 1 package (services/a) | code-first | 1 | n/a | off | no |",
                       (pl.runs_of(self.spec_dir) / "METRICS.md").read_text())
+
+    # --- the phase checks `next` runs before a built scenario is done -------------------------
+
+    def changed(self, *rels):
+        for rel in rels:
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n")
+
+    def test_a_built_scenario_runs_the_phase_checks_on_the_packages_and_workspaces_it_changed(self):
+        self.built()
+        self.changed("go/services/a/a.go", "go/services/a/b.go", "go/gen/x/x.go",
+                     "frontend/packages/app/src/x.ts", "frontend/packages/app/src/x.test.ts",
+                     "frontend/packages/shared/src/y.ts", "frontend/packages/genapi/src/g.ts", "docs/notes.md")
+
+        _, out = self.next()
+
+        pre = self.state()["scenarios"]["SCENARIO-01"]["pre"]
+        self.assertEqual([(pre, ["./", "./services/a/"], ["app", "shared"])], self.phase_calls)
+        self.assertIn("phase checks passed", out)
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-01"]["done"])
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-01"].get("in_pr"))  # Closes #2 is in PR.md
+
+    def test_a_scenario_that_changed_no_code_runs_no_phase_check(self):
+        self.built(test_file=False)
+
+        self.next()
+
+        self.assertEqual([], self.phase_calls)
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-01"]["done"])
+
+    def test_a_failing_phase_check_is_not_done_and_goes_back_to_the_developer_with_the_failure(self):
+        self.built()
+        self.phase_says.append((False, "coverage: FAILED (changed blocks no test runs)\ngo/a.go:3-4: never runs"))
+
+        _, out = self.next()
+
+        s = self.state()["scenarios"]["SCENARIO-01"]
+        self.assertFalse(s["done"])
+        self.assertFalse(s.get("in_pr"))
+        self.assertIn("run: build unit: SCENARIO-01 feature: demo", out)
+        brief = Path(out.split("Brief: ")[1].split(" — ")[0]).read_text()
+        self.assertIn("## Phase checks failed", brief)
+        self.assertIn("go/a.go:3-4: never runs", brief)
+        self.assertIn("This is the scenario's last run.", brief)
+
+    def test_the_phase_checks_run_again_after_the_fix_run_and_a_pass_is_done(self):
+        self.built()
+        self.phase_says.append((False, "test: FAILED"))
+        self.next()
+        self.agent_ran("developer", "run: build unit: SCENARIO-01 feature: demo", "## Phase report\nfixed")
+
+        _, out = self.next()
+
+        self.assertEqual(2, len(self.phase_calls))
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-01"]["done"])
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-01"].get("in_pr"))  # Closes #2 is in PR.md
+        self.assertIn("run: build unit: SCENARIO-02 feature: demo size: small", out)
+
+    @mock.patch.object(pl, "CHECKPOINT", True)
+    def test_a_passed_phase_check_is_not_run_again(self):
+        self.built()
+        self.next()
+
+        _, out = self.next("--drop-pending")
+
+        self.assertIn("run: checkpoint unit: SCENARIO-01", out)
+
+        self.assertEqual(1, len(self.phase_calls))
+
+    def test_phase_checks_still_failing_after_the_fix_runs_stop_for_a_person(self):
+        self.built()
+        for _ in range(pl.MAX_PHASE_FIX_RUNS):
+            self.phase_says.append((False, "lint: FAILED"))
+            self.next()
+            self.agent_ran("developer", "run: build unit: SCENARIO-01 feature: demo", "## Phase report\ntried")
+        self.phase_says.append((False, "lint: FAILED\nstill"))
+
+        code, out = self.next()
+
+        self.assertEqual(2, code)
+        self.assertIn("REFUSED", out)
+        self.assertIn("lint: FAILED\nstill", out)
+        self.assertFalse(self.state()["scenarios"]["SCENARIO-01"]["done"])
+
+    @mock.patch.object(pl, "CHECKPOINT", True)
+    def test_a_failing_phase_check_comes_before_the_checkpoint(self):
+        self.built()
+        self.phase_says.append((False, "test: FAILED"))
+
+        _, out = self.next()
+
+        self.assertNotIn("run: checkpoint", out)
+        self.assertIn("run: build unit: SCENARIO-01 feature: demo", out)
 
     @mock.patch.object(pl, "CHECKPOINT", True)
     def test_a_blocking_checkpoint_gets_one_fix_pass_then_moves_on(self):

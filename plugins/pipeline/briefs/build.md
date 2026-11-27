@@ -74,8 +74,9 @@ itself — the architect's header lines (`architect` → *Plan format*) and a ch
 most 15 lines**, each test step ending `covers NN.k` (*Scenario traceability*) and the
 acceptance step naming its `setup from` (*Acceptance test setup*) — before any code, then builds
 as usual. Every run is tagged `size: small`. With the checkpoint off, what backs a small plan
-up is mechanical: `check.py phase` fails a changed block no test runs, and the mutation sample
-before the last run names a changed line no test notices.
+up is mechanical: `check.py phase` fails a changed block no test runs (`next` runs it before it
+records the scenario done), and the mutation sample before the last run names a changed line no
+test notices.
 
 ## Bounded runs
 

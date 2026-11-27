@@ -23,6 +23,12 @@ Usage (from anywhere in the repo):
 Runs `go test -covermode=set` on the packages itself. `check.py phase --go` calls
 `uncovered()` on the profile of the test run it already does instead.
 Exit status is non-zero when a changed block is uncovered.
+
+TypeScript: `uncovered_ts()` reads the istanbul json vitest writes (`coverage-final.json`, from
+`ts_cover_flags()`, which `check.py phase --ts` passes through the test step's `{cover}`) and
+reports each statement, branch arm (a ternary's, a `&&` / `??` operand, a `case`, an `if`'s
+`then`) and function that ran zero times and overlaps a changed line, with the same marker
+(`// uncovered: <why>` on its opening line or the line above). The CLI judges Go only.
 """
 
 from __future__ import annotations
@@ -112,6 +118,78 @@ def uncovered(root: Path, profile: str, dirs: dict[str, Path],
         found.append(f"{rel}:{start}-{end}: changed block never runs in a test: `{what[:80]}` — test it, "
                      f"or mark it `{MARKER} <why it cannot run>`")
     return found
+
+
+def zero_spans(entry: dict) -> list[tuple[int, int]]:
+    """(start line, end line) of every statement, branch arm and function an istanbul file entry counts zero.
+
+    An `if` branch's locations are the whole statement in istanbul's json; only its first (the `then`
+    arm) is judged — the `else` arm's code, when there is any, has statements of its own, and an
+    `if` with no `else` has nothing there to test (Go has no block for it either).
+    """
+    spans: list[tuple[int, int]] = []
+
+    def add(loc: dict | None) -> None:
+        start, end = ((loc or {}).get("start") or {}).get("line"), ((loc or {}).get("end") or {}).get("line")
+        if isinstance(start, int) and start > 0:
+            spans.append((start, end if isinstance(end, int) and end >= start else start))
+
+    for sid, loc in (entry.get("statementMap") or {}).items():
+        if not (entry.get("s") or {}).get(sid, 0):
+            add(loc)
+    for bid, branch in (entry.get("branchMap") or {}).items():
+        counts = (entry.get("b") or {}).get(bid) or []
+        locations = branch.get("locations") or []
+        if branch.get("type") == "if":
+            locations = locations[:1]
+        for i, loc in enumerate(locations):
+            if i < len(counts) and not counts[i]:
+                add(loc)
+    for fid, fn in (entry.get("fnMap") or {}).items():
+        if not (entry.get("f") or {}).get(fid, 0):
+            add(fn.get("loc") or fn.get("decl"))
+    return sorted(set(spans))
+
+
+def uncovered_ts(root: Path, report: dict, judged: Callable[[str], bool],
+                 changed: Callable[[str], set[int]], generated: tuple[str, ...] = ()) -> list[str]:
+    """`file:start-end` findings for zero-count statements, branch arms and functions overlapping a changed line.
+
+    `report` is vitest's istanbul json (absolute path → file entry). A file outside `root`, under a
+    `generated` root, or refused by `judged(rel)` (a test file, another workspace) is skipped. A span
+    with the marker on its opening line or the line above is exempt with all it holds.
+    """
+    found: list[str] = []
+    for key, entry in sorted(report.items()):
+        path = Path(entry.get("path") or key) if isinstance(entry, dict) else None
+        if path is None or not path.is_absolute():
+            continue
+        try:
+            rel = path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            continue
+        if (generated and rel.startswith(tuple(generated))) or not judged(rel):
+            continue
+        spans = zero_spans(entry)
+        if not spans:
+            continue
+        src = path.read_text().splitlines() if path.is_file() else []
+        lines_changed = changed(rel)
+        exempt = [(a, b) for a, b in spans if any(MARKER in l for l in src[max(a - 2, 0):a])]
+        kept = [(a, b) for a, b in spans
+                if lines_changed & set(range(a, b + 1)) and not any(x <= a and b <= y for x, y in exempt)]
+        for a, b in kept:
+            if any((x, y) != (a, b) and x <= a and b <= y for x, y in kept):
+                continue  # inside another finding: one untested region is one finding
+            what = src[a - 1].strip() if 0 < a <= len(src) else ""
+            found.append(f"{rel}:{a}-{b}: changed code never runs in a test: `{what[:80]}` — test it, "
+                         f"or mark it `{MARKER} <why it cannot run>`")
+    return found
+
+
+def ts_cover_flags(report_dir: Path) -> list[str]:
+    """vitest flags that write istanbul json (`coverage-final.json`) into `report_dir`, whatever the repo's own reporters."""
+    return ["--coverage.enabled", "--coverage.reporter=json", f"--coverage.reportsDirectory={report_dir}"]
 
 
 def cover_flags(pkgs: list[str], profile: Path) -> list[str]:
