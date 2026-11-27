@@ -584,40 +584,29 @@ def test_surface(root: Path, path: str):
     return next((s for s in surfaces if s.is_test(path)), False)
 
 
-def kind_of(surface, path: str) -> str:
-    """`go`, `ts` or `script`: the surface's kind, else the built-in language the suffix names."""
-    if surface:
-        return surface.kind
-    return "go" if path.endswith(".go") else "ts"
+def _adapters():
+    """adapters, the sibling that says how each surface's language is worked."""
+    if "adapters" not in sys.modules:
+        import importlib.util
+        loader = importlib.util.spec_from_file_location("adapters", Path(__file__).resolve().parent / "adapters.py")
+        module = importlib.util.module_from_spec(loader)
+        sys.modules["adapters"] = module
+        loader.loader.exec_module(module)
+    # The built-in adapters call this module's test finders and runners: let them find this copy.
+    if __name__ in sys.modules:  # a loader that did not register this module leaves adapters to load its own
+        sys.modules.setdefault("spec_check", sys.modules[__name__])
+    return sys.modules["adapters"]
 
 
 def test_exists(surface, path: str, src: str, name: str) -> bool:
-    """Whether the test file `src` defines the test `name`. A repo-supplied language has no parser here:
-    its test's name (the last part of a `›` or `/` path) must appear in the file."""
-    kind = kind_of(surface, path)
-    if kind == "script":
-        last = re.split(r"\s*›\s*|/", name)[-1].strip()
-        return bool(last) and last in src
-    return go_test_exists(src, name) if kind == "go" else ts_test_exists(src, name)
-
-
-def run_script_test(root: Path, surface, path: str, name: str) -> str | None:
-    """Run one test of a repo-supplied language with its surface's `test_one` (`{file}`, `{name}`); exit 0
-    is a pass. None when it passed, else the reason."""
-    if not surface.test_one:
-        return f"no `test_one` command on the `{surface.name}` surface in {pc.CONFIG} to run it: {path}"
-    out = subprocess.run(pc.expand(surface.test_one, file=path, name=name), cwd=root, capture_output=True, text=True)
-    if out.returncode != 0:
-        return "failed:\n" + "\n".join((out.stdout + out.stderr).splitlines()[-20:])
-    return None
+    """Whether the test file `src` defines the test `name`, as the surface's adapter reads it (with no
+    surface, the built-in language the suffix names)."""
+    return _adapters().adapter_for(Path("."), surface, path).test_exists(path, src, name)
 
 
 def run_test(root: Path, surface, path: str, name: str) -> str | None:
-    """Run one acceptance test by its surface's kind. None when it passed, else the reason."""
-    kind = kind_of(surface, path)
-    if kind == "script":
-        return run_script_test(root, surface, path, name)
-    return run_go_test(root, path, name) if kind == "go" else run_ts_test(root, path, name)
+    """Run one acceptance test through the surface's adapter. None when it passed, else the reason."""
+    return _adapters().adapter_for(root, surface, path).run_test(path, name)
 
 
 def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> list[str]:

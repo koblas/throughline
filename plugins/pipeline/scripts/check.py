@@ -24,7 +24,8 @@ Three modes:
   phase  Run once at a phase boundary instead of hand-typed build/lint/test commands:
            scripts/check.py phase --go ./services/core/todo/ [--run 'Pattern']
            scripts/check.py phase --ts <workspace> [--filter todo.test]
-           scripts/check.py phase --surface <name> <changed files…>   (a repo-supplied language)
+           scripts/check.py phase --surface <name> [<targets…>]   (any surface by name: packages for Go,
+                                                                 a workspace for TS, changed files otherwise)
          Go: `go build ./...`, `go mod tidy -diff`, `golangci-lint run` on the packages, the
          doc-comment budget on exported symbols the working tree changed (about 4 lines), `time.Sleep` on changed lines of a test file that is not in a
          `testing/synctest` bubble (a real sleep is a flake with a timer; inside a bubble it is the
@@ -528,154 +529,104 @@ def phase(args: argparse.Namespace) -> int:
         return _phase(args, Path(tmp) / "cover.out", Path(tmp) / "ts-cover", Path(tmp) / "report")
 
 
-def script_surface(root: Path, args: argparse.Namespace):
-    """The surface `--surface NAME` names, with its targets; None without the flag. A Go or TS surface by
-    name is the same as `--go` / `--ts`, which is what the caller turns it into."""
-    if not getattr(args, "surface", None):
-        return None
-    name, *targets = args.surface
-    surface = pc.load(root).surface(name)
-    if surface is None:
-        raise pc.ConfigError(f"{pc.load(root).path}: no surface named `{name}`")
-    return surface, targets
-
-
 def at(root: Path, ref: str, rel: str) -> str | None:
     """`rel` as tree or commit `ref` holds it; None when it does not."""
     out = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=root, capture_output=True, text=True)
     return out.stdout if out.returncode == 0 else None
 
 
-def script_absence(root: Path, surface, files: list[str], base: str, to: str) -> list[str]:
-    """The adapter's `absence` on the surface's changed test files; one line per problem."""
-    tests = {f: {"new": at(root, to, f) or "", "old": at(root, base, f)} for f in files if surface.is_test(f)}
-    if not tests:
-        return []
-    return [f"- `{p}:{line}` `{name}` — {why}" for p, line, name, why in ad.absence(root, surface, tests)]
-
-
-def script_coverage(root: Path, surface, files: list[str], report: Path, base: str, to: str) -> tuple[bool, str]:
-    """(failed, line) for the adapter's `coverage` on the surface's changed production files."""
-    changed = {f: lines for f in files if surface.is_production(f) and (lines := changed_lines(root, f, base, to))}
-    if not changed:
-        return False, "coverage: ok (no production line changed)"
-    try:
-        found = ad.uncovered(root, surface, report, changed)
-    except ad.Skipped as why:
-        return False, f"coverage: skipped ({why})"
-    except ad.AdapterError as why:
-        return True, f"coverage: FAILED (the adapter failed: {why})"
-    if found:
-        return True, "coverage: FAILED (changed code no test runs)\n" + capped("\n".join(found))
-    return False, "coverage: ok"
+def phase_jobs(root: Path, args: argparse.Namespace) -> list[tuple[object, list[str], str | None]]:
+    """(adapter, targets, narrowing pattern) for each run of a surface's phase steps the arguments ask
+    for: `--go` and `--ts` (the config's first surface of that language), `--surface NAME TARGET…`."""
+    config = pc.load(root)
+    wanted: list[tuple[object, list[str], str | None]] = []
+    for language, targets, narrow in (("go", args.go, args.run), ("ts", [args.ts] if args.ts else None, args.filter)):
+        if targets:
+            surface = config.language(language)
+            if surface is None:
+                raise pc.ConfigError(f"{config.path}: no `{language}` surface with `phase` steps for --{language}")
+            wanted.append((surface, targets, narrow))
+    if getattr(args, "surface", None):
+        name, *targets = args.surface
+        surface = config.surface(name)
+        if surface is None:
+            raise pc.ConfigError(f"{config.path}: no surface named `{name}`")
+        wanted.append((surface, targets or ad.adapter_for(root, surface).default_targets(), args.run or args.filter))
+    jobs = []
+    for surface, targets, narrow in wanted:
+        if not surface.phase:
+            raise pc.ConfigError(f"{config.path}: the `{surface.name}` surface has no `phase` steps")
+        adapter = ad.adapter_for(root, surface)
+        jobs += [(adapter, t, n) for t, n in adapter.phase_jobs(targets, narrow)]
+    return jobs
 
 
 def phase_checks(root: Path, args: argparse.Namespace, profile: Path, ts_report: Path | None = None,
                  base: str | None = None, to: str | None = None,
                  report: Path | None = None) -> list[tuple[str, list[str], Path, str]]:
-    """(name, command, cwd, language) for each `phase` step of the config's first `go` surface (with --go)
-    and first `ts` surface (with --ts), its placeholders filled from the arguments. `{cover}` writes the
-    Go profile to `profile` and the TS istanbul json into `ts_report`; a --run / --filter leaves it empty.
-    `{base}` and `{to}` are the revision "changed" is judged against and the working tree's snapshot, so
-    a repo's own diff check (a ratchet, say) reads the same change as the plugin's."""
-    ts_report = ts_report or profile.parent / "ts-cover"
-    config = pc.load(root)
-    checks: list[tuple[str, list[str], Path, str]] = []
-    for language, wanted in (("go", args.go), ("ts", args.ts)):
-        if not wanted:
-            continue
-        surface = config.language(language)
-        if surface is None or not surface.phase:
-            raise pc.ConfigError(f"{config.path}: no `{language}` surface with `phase` steps for --{language}")
-        # A filter narrows which tests run, so the report would call untested what other tests cover.
-        values = {"workspace": args.ts, "filter": [args.filter] if args.filter else [],
-                  "cover": [] if args.filter else _diff_coverage_module().ts_cover_flags(ts_report)}
-        if language == "go":
-            # A -run pattern narrows which tests run, so the profile would call untested what other tests cover.
-            values = {"packages": args.go, "packages/...": [p.rstrip("/") + "/..." for p in args.go],
-                      "cover": [] if args.run else _diff_coverage_module().cover_flags(args.go, profile),
-                      "run": ["-run", args.run] if args.run else []}
-        values |= {k: v for k, v in (("base", base), ("to", to)) if v}
-        checks += [(step["name"], pc.expand(step["command"], **values), root / step.get("cwd", surface.root), language)
-                   for step in surface.phase]
-    if picked := script_surface(root, args):
-        surface, files = picked
-        if not surface.phase:
-            raise pc.ConfigError(f"{config.path}: the `{surface.name}` surface has no `phase` steps")
-        values = {"files": files, "report": [str(report or profile.parent / "report")],
-                  **{k: v for k, v in (("base", base), ("to", to)) if v}}
-        checks += [(step["name"], pc.expand(step["command"], **values), root / step.get("cwd", surface.root), "script")
-                   for step in surface.phase]
-    return checks
+    """(name, command, cwd, kind) for each `phase` step the arguments ask for (`phase_jobs`), its
+    placeholders filled by the surface's adapter. `{cover}` writes the Go profile to `profile` and the TS
+    istanbul json into `ts_report`; a script surface's steps get `{files}` and `{report}`; a --run /
+    --filter leaves the coverage flags empty. `{base}` and `{to}` are the revision "changed" is judged
+    against and the working tree's snapshot, so a repo's own diff check reads the same change."""
+    return [step[:4] for step in _steps(root, args, _reports(profile, ts_report, report), base, to)]
+
+
+def _reports(profile: Path, ts_report: Path | None, report: Path | None) -> dict[str, Path]:
+    """Where each kind of adapter's test step writes its coverage report."""
+    return {"go": profile, "ts": ts_report or profile.parent / "ts-cover", "script": report or profile.parent / "report"}
+
+
+def _steps(root: Path, args: argparse.Namespace, reports: dict[str, Path], base: str | None, to: str | None):
+    """(name, command, cwd, kind, (adapter, targets, narrow)) for each step of each phase job."""
+    out = []
+    for job in phase_jobs(root, args):
+        adapter, targets, narrow = job
+        values = adapter.phase_values(targets, narrow, reports) | {k: v for k, v in (("base", base), ("to", to)) if v}
+        out += [(step["name"], pc.expand(step["command"], **values), root / step.get("cwd", adapter.surface.root),
+                 adapter.kind, job) for step in adapter.surface.phase]
+    return out
 
 
 def _phase(args: argparse.Namespace, profile: Path, ts_report: Path, report: Path | None = None) -> int:
     root = repo_root()
-    try:
-        picked = script_surface(root, args)
-    except pc.ConfigError as why:
-        print(f"check phase: {why}", file=sys.stderr)
-        return 2
-    if picked and picked[0].kind != "script":  # a built-in surface by name: the same as its own flag
-        surface, targets = picked
-        if surface.kind == "go":
-            args.go = targets or ["./..."]
-        else:
-            args.ts = targets[0] if targets else None
-        args.surface, picked = None, None
-    if not args.go and not args.ts and not picked:
+    if not args.go and not args.ts and not getattr(args, "surface", None):
         print("check phase: pass --go, --ts or --surface", file=sys.stderr)
         return 2
     # One base and one snapshot for every check that reads the diff, so they judge the same change.
     base, to = args.base or scenario_base(root), snapshot(root)
-    report = report or profile.parent / "report"
+    reports = _reports(profile, ts_report, report)
     try:
-        checks = phase_checks(root, args, profile, ts_report, base, to, report)
+        steps = _steps(root, args, reports, base, to)
     except pc.ConfigError as why:
         print(f"check phase: {why}", file=sys.stderr)
         return 2
     failed = False
-    diff_checks = [("doc", doc_budget(root, args.go, base, to)), ("sleep", real_sleeps(root, args.go, base, to)),
-                   ("layout", test_layout(root, args.go, base, to)),
-                   ("absence", absence_only(root, False, base, to))] if args.go else []
-    diff_checks += [("absence-ts", absence_only(root, True, base, to))] if args.ts else []
-    if picked:
-        surface, files = picked
-        try:
-            diff_checks.append((f"absence-{surface.name}", script_absence(root, surface, files, base, to)))
-        except ad.Skipped as why:
-            print(f"absence-{surface.name}: skipped ({why})")
-        except ad.AdapterError as why:
-            failed = True
-            print(f"absence-{surface.name}: FAILED (the adapter failed: {why})")
-    for name, found in diff_checks:
-        if found and name.startswith("absence"):
-            failed = True
-            print(f"{name}: FAILED — absence-only tests with no control (`{pc.brief('proof.md')}` → *Assertions "
-                  "that prove nothing*)\n" + capped("\n".join(found)))
-        elif found:
-            failed = True
-            print(f"{name}: FAILED (on changed lines)\n" + capped("\n".join(found)))
-        else:
-            print(f"{name}: ok")
-    for name, cmd, cwd, language in checks:
+    jobs = list({id(job): job for *_, job in steps}.values())  # each job once, in order
+    for adapter, targets, _ in jobs:
+        for name, found, note in adapter.diff_checks(sys.modules[__name__], targets, base, to):
+            if note:
+                failed = failed or note.startswith("FAILED")
+                print(f"{name}: {note}")
+            elif found and name.startswith("absence"):
+                failed = True
+                print(f"{name}: FAILED — absence-only tests with no control (`{pc.brief('proof.md')}` → *Assertions "
+                      "that prove nothing*)\n" + capped("\n".join(found)))
+            elif found:
+                failed = True
+                print(f"{name}: FAILED (on changed lines)\n" + capped("\n".join(found)))
+            else:
+                print(f"{name}: ok")
+    for name, cmd, cwd, _, (adapter, targets, narrow) in steps:
         ok, out = run(cmd, cwd)
         if name == "tidy" and not ok and ENV_FAILURE_RE.search(out):
             # The module graph needs a download the sandbox refuses: not a go.mod finding.
             print("tidy: skipped (module cache or network unavailable here; the runner and CI check it)")
             continue
         if ok:
-            count = ""
-            if name == "test" and language != "script":  # a repo-supplied language's output has no known shape
-                ts = re.search(r"Tests\s+(\d+ passed[^\n]*)", out)
-                passed = len(re.findall(r"^\s*--- PASS", out, re.MULTILINE))
-                skipped = len(re.findall(r"^\s*--- SKIP", out, re.MULTILINE))
-                count = f" — {ts.group(1).strip()}" if ts else f" — {passed} passed, {skipped} skipped (subtests included)"
-            print(f"{name}: ok{count}")
+            print(f"{name}: ok{adapter.test_count(out) if name == 'test' else ''}")
             if name == "test":
-                bad, line = (coverage_verdict(root, args.go, profile, base, to, args.run) if language == "go" else
-                             coverage_verdict(root, args.ts, ts_report, base, to, args.filter, language="ts")
-                             if language == "ts" else script_coverage(root, picked[0], picked[1], report, base, to))
+                bad, line = adapter.coverage(sys.modules[__name__], targets, narrow, reports, base, to)
                 failed = failed or bad
                 print(line)
         else:
