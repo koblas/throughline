@@ -225,6 +225,29 @@ class PipelineTest(AdapterRepo):
         self.assertIn("mutation-sample: skipped", out.stdout)
         self.assertIn("no mutation sampling", out.stdout)
 
+    def test_a_scenario_that_edits_its_own_adapter_is_not_judged_by_it(self):
+        self.change("def greet():\n    return 'hello'\n")  # no `# run`: an honest adapter fails it
+        (self.root / ".claude" / "py-adapter.py").write_text(ADAPTER.replace(
+            'if f"{p}:{n}" not in ran', 'if False'))  # the rewritten judge passes everything
+        s = {"pre": "HEAD"}
+
+        with self.assertRaises(pl.Refuse) as caught, contextlib.redirect_stdout(io.StringIO()):
+            pl.phase_gate(self.root, "SCENARIO-01", s)
+
+        self.assertIn("changed `.claude/py-adapter.py`, the adapter that judges", str(caught.exception))
+        self.assertIn("next --adapter-ok", str(caught.exception))
+        self.assertNotIn("phase_ok", s)
+
+    def test_once_a_person_has_read_the_adapter_change_its_verdict_counts(self):
+        self.change("def greet():\n    return 'hello'  # run\n")
+        (self.root / ".claude" / "py-adapter.py").write_text(ADAPTER + "\n# reviewed\n")
+        s = {"pre": "HEAD"}
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.phase_gate(self.root, "SCENARIO-01", s, adapter_ok=True)
+
+        self.assertTrue(s.get("phase_ok"), s)
+
     def test_the_adapter_script_is_a_build_definition(self):
         c = pc.load(self.root)
 
@@ -254,6 +277,13 @@ class SpecTest(AdapterRepo):
 
     def test_a_file_outside_every_surfaces_tests_is_not_one(self):
         self.assertIs(self.sc.test_surface(self.root, "src/greet.py"), False)
+
+    def test_the_race_gate_has_nothing_to_race_without_a_go_surface(self):
+        out = subprocess.run([sys.executable, str(SCRIPTS / "race-gate.py"), "--dry-run", "--base", "HEAD"],
+                             cwd=self.root, capture_output=True, text=True)
+
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("no `go` surface", out.stdout)
 
     def test_cited_paths_in_the_new_language_are_checked(self):
         cites = self.sc.cite_re(self.root)

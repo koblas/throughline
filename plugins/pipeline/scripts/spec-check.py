@@ -655,6 +655,8 @@ def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> l
             problems.append(f"{slug} {sid}: acceptance test file not found: {path}")
             continue
         surface = test_surface(root, path)
+        if surface is False and re.search(r"\.(?:go|tsx?|jsx?)$", path):
+            surface = None  # a built-in language's test outside every surface's globs: judged by suffix, as before
         if surface is False:
             problems.append(f"{slug} {sid}: {path} is not a test file of any surface in {pc.CONFIG} "
                             "(its `tests` globs)")

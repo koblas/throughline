@@ -305,12 +305,15 @@ class Config:
     def is_test_support(self, path: str) -> bool:
         return bool(self.test_support_re and self.test_support_re.search(path))
 
+    def adapter_files(self) -> set[str]:
+        """The repo files the surfaces' adapter commands run (`python3 .claude/a.py` → `.claude/a.py`)."""
+        return {a.removeprefix("./") for s in self.surfaces for a in s.adapter or [] if (self.root / a).is_file()}
+
     def is_build_definition(self, path: str) -> bool:
         """A file that decides what a command run outside the sandbox does: the config, its
         `build_definitions`, and every surface's adapter script (a feature that edits its own adapter
         could make coverage pass on nothing)."""
-        adapters = {a.removeprefix("./") for s in self.surfaces for a in s.adapter or [] if (self.root / a).is_file()}
-        return (path == CONFIG.as_posix() or path in adapters
+        return (path == CONFIG.as_posix() or path in self.adapter_files()
                 or bool(self.build_definitions_re and self.build_definitions_re.search(path)))
 
     def request(self, name: str) -> list[str] | None:

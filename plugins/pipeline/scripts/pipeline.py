@@ -2344,17 +2344,30 @@ def run_phase(root: Path, base: str, targets: dict[str, list[str]]) -> tuple[boo
 RUN_PHASE = run_phase  # replaced in tests: they never run go or npm
 
 
-def phase_gate(root: Path, unit: str, s: dict) -> None:
+def edited_adapters(root: Path, base: str, to: str) -> list[str]:
+    """The surfaces' adapter files (`Config.adapter_files`) changed between `base` and `to`."""
+    adapters = config(root).adapter_files()
+    return sorted(f for f in sh(root, "git", "diff", "--name-only", base, to).split() if f in adapters) if adapters else []
+
+
+def phase_gate(root: Path, unit: str, s: dict, adapter_ok: bool = False) -> None:
     """Run the phase checks on what a ticked scenario changed since its pre-scenario snapshot.
 
     A pass (or nothing to check) sets `phase_ok`; a failure sets `phase_failed` to the output, which the
-    next build run carries. Refuses once MAX_PHASE_FIX_RUNS fix runs have not made it pass.
+    next build run carries. Refuses once MAX_PHASE_FIX_RUNS fix runs have not made it pass. Refuses, too,
+    when the work has edited an adapter that judges it, until a person has read that change
+    (`next --adapter-ok`): a run that rewrote its own judge could pass on nothing.
     """
     base = s["pre"] or "HEAD"
-    targets = phase_targets(root, base, snap(root))
+    to = snap(root)
+    targets = phase_targets(root, base, to)
     if not any(targets.values()):
         s["phase_ok"] = True
         return
+    if not adapter_ok and (edited := edited_adapters(root, base, to)):
+        raise Refuse(f"{unit} changed {', '.join(f'`{f}`' for f in edited)}, the adapter that judges its coverage "
+                     "and its absence-only tests, so its verdict cannot be taken as it stands. Read the change, then "
+                     "call `next --adapter-ok` to trust that adapter for the rest of this feature, or revert it")
     ok, out = RUN_PHASE(root, base, targets)
     what = "; ".join(" ".join(argv) for argv in phase_argvs(root, targets))
     if ok:
@@ -2427,7 +2440,7 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
             return 0
 
         if ticked.get(unit) and s["checkpoint"] is None and not s.get("phase_ok") and not s.get("phase_failed"):
-            phase_gate(root, unit, s)
+            phase_gate(root, unit, s, state.get("adapter_ok", False))
         if not ticked.get(unit) or s.get("phase_failed"):
             reply_file = s.get("last_reply", "its transcript")
             if s.get("blocked"):
@@ -2708,6 +2721,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="an agent's reply in a file, instead of looking it up in a transcript")
         p.add_argument("--json", action="store_true", help="also print the action as JSON after `=== ACTION ===`")
     n.add_argument("--plan-ok", action="store_true", help="the current scenario's plan passed the deviation scan")
+    n.add_argument("--adapter-ok", action="store_true",
+                   help="a person read this feature's change to a language adapter: trust its verdicts from here on")
     n.add_argument("--only", metavar="A,B", help="re-gate: the reviewers to re-run; `none` re-runs the checks alone")
     n.add_argument("--drop-pending", action="store_true", help="forget the step that was printed and print it again")
     n.add_argument("--accept-open", action="store_true",
@@ -2949,6 +2964,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             save_state(spec_dir, state)
         if args.cmd == "record":
             return 0
+        if getattr(args, "adapter_ok", False):
+            state["adapter_ok"] = True
         if args.plan_ok:
             current = next((u for u in state["order"] if not state["scenarios"][u]["done"]
                             and not state["scenarios"][u]["folded_into"]), None)
