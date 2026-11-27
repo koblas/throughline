@@ -20,7 +20,7 @@ run: <kind> unit: <unit> feature: <feature-slug> [size: small] [agent: <name>]
 | `scope` | triage, product-vision (the product-spec ruling), the sizing architect | `feature` |
 | `plan` | architect | `SCENARIO-NN` |
 | `build` | developer, each bounded run | `SCENARIO-NN` |
-| `checkpoint` | step-5a test-reviewer / ui-test-reviewer | `SCENARIO-NN` |
+| `checkpoint` | step-5a: the touched surfaces' test reviewers | `SCENARIO-NN` |
 | `checkpoint-fix` | developer fixing checkpoint findings | `SCENARIO-NN` |
 | `review` | every reviewer in a gate round | `REVIEW-NN` |
 | `gate-fix` | developer fixing a gate round | `REVIEW-NN` it fixes |

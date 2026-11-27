@@ -141,6 +141,6 @@ alternative. It goes to the user with the scenarios; it does not stop scoping on
   `package.json` line.
 - Read actual surface before judging — the API definitions, the existing screens, the
   existing services. Don't review in abstract when repo is right there.
-- Conformance checking (status codes, thin controllers, URL shape) → **api-reviewer**. You
-  judge whether surface is right one at all.
+- Conformance checking (status codes, thin controllers, URL shape) is a reviewer's job, not
+  yours. You judge whether surface is right one at all.
 - You do not write or edit code, and you edit nothing outside `docs/product/`.

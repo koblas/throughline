@@ -93,8 +93,8 @@ Assertions that look like proof and are not recur in a few shapes:
   `// control: <title or func name of the sibling test in the same file>`.
   `scripts/absence-only.py` lists the new or changed tests that do neither: `scripts/check.py
   phase` fails on them in the developer's own run (the locked acceptance test excepted), and
-  the checkpoint brief lists them under *Absence-only tests* for the `test-reviewer` or
-  `ui-test-reviewer`. The reviewer rules on each: where a control exists and differs in
+  the checkpoint brief lists them under *Absence-only tests* for the surface's test
+  reviewer. The reviewer rules on each: where a control exists and differs in
   one variable, name it and raise only a NIT for the missing comment; otherwise it is a
   MAJOR — the test passes with the code under test deleted. A test that names a control is
   not listed, so the script's silence is not proof: the reviewer still reads the diff.

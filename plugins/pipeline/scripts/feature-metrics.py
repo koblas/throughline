@@ -260,7 +260,7 @@ def guess_kind(agent_type: str, prompt: str) -> tuple[str, str]:
         return "plan", scenario.group(0) if scenario else "?"
     if agent_type in ("triage", "product-vision"):
         return "scope", "feature"
-    if agent_type.endswith("reviewer") or agent_type == "refactor-advisor":
+    if agent_type.endswith(("reviewer", "advisor")):
         if "checkpoint" in prompt.lower()[:200]:
             return "checkpoint", scenario.group(0) if scenario else "?"
         return "review", review.group(0) if review else "?"

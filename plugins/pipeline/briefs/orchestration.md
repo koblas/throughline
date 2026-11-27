@@ -134,10 +134,9 @@ session at the same time.
   for each finding whose fix adds runtime behaviour, and the replacement citation for any
   spec-cited test it retires (`briefs/fix-pass.md` → *Fix passes*).
 - **Re-gate narrowly (step 9).** `next --only a,b`: the reviewers that blocked, plus any whose
-  *concern* the fix touched — `correctness-reviewer` for production Go logic;
-  `ts-correctness-reviewer` for production TypeScript logic; `test-reviewer` for Go tests;
-  `ui-test-reviewer` for frontend tests. Those four are the gate (`pipeline.py`
-  `GATE_REVIEWERS`): `arch-reviewer`, `api-reviewer` and `refactor-advisor` run ad hoc with
+  *concern* the fix touched — each surface's correctness reviewer for its production code and its
+  test reviewer for its tests (`surfaces.*.reviewers` and `surfaces.*.covers` in
+  `.claude/pipeline.json`). Only those are the gate; every other reviewer runs ad hoc with
   `/pipeline:run-reviewers <paths>`. A fix
   that touches a security-sensitive file is always re-read by its correctness reviewer — the
   script adds it.
@@ -213,10 +212,9 @@ It runs as a batch, one unit per package:
 
 ## Agent roster
 
-The plugin's agents are spawned as `pipeline:<name>` (`triage`, `product-vision`, `architect`,
-`developer`, `refuter`, `test-reviewer`, `pipeline-reviewer`); the repo's own agents (under
-`.claude/agents/`, the other rows here) by their bare name. An agent added, renamed or moved —
-into the plugin or out of it — is not loaded until the session restarts.
+The plugin's agents, below, are spawned as `pipeline:<name>`; the repo's own agents (under
+`.claude/agents/`) by their bare name. An agent added, renamed or moved — into the plugin or out
+of it — is not loaded until the session restarts.
 
 | Agent | Stage | Model | Owns |
 | --- | --- | --- | --- |
@@ -224,16 +222,15 @@ into the plugin or out of it — is not loaded until the session restarts.
 | `product-vision` | scoping, after the kickoff (Full lane only) | opus | The surface-and-copy ruling, written into `docs/product/<area>.md` |
 | `architect` | sizing + per large scenario | opus | Acceptance test + behaviour-batch checklist. No code |
 | `developer` | per scenario | sonnet | Double-loop implementation, fix mode |
-| `correctness-reviewer` | gate | opus | Behaviour against the spec; context, goroutines, races, Lambda state reuse, errors |
-| `ts-correctness-reviewer` | gate | sonnet | Behaviour against the spec; production TS: credentials, hooks/effects, async, caches |
-| `test-reviewer` / `ui-test-reviewer` | gate (+ checkpoint 5a when it is on) | sonnet | Coverage, corner cases, test quality |
-| `arch-reviewer` | ad hoc only (`/pipeline:run-reviewers <paths>`) | sonnet | Layout, dependency rule, Store + adapters, wiring |
-| `api-reviewer` | ad hoc only (`/pipeline:run-reviewers <paths>`) | sonnet | HTTP/ogen conformance |
-| `refactor-advisor` | ad hoc only (`/pipeline:run-reviewers <paths>`) | sonnet | Quality. MINOR/NIT only — never blocks |
+| `test-reviewer` | gate, for a surface that names it (+ checkpoint 5a when it is on) | sonnet | Coverage, corner cases, test quality of Go tests |
 | `refuter` | gate (7a), off by default | opus | Proves a reviewer MAJOR wrong, or lets it stand. Raises nothing |
 | `pipeline-reviewer` | `.claude/**`, the plugin + retro | sonnet | Contradictions, duplicated policy, dangling pointers |
 
-The gate's reviewers are not fixed here: each surface in `.claude/pipeline.json` names its correctness and test reviewer (`surfaces.*.reviewers`), and only those run at the gate.
+The gate's reviewers are the repo's choice, not the plugin's: each surface in `.claude/pipeline.json`
+names its correctness and test reviewer (`surfaces.*.reviewers`), and only those run at the gate.
+The plugin ships no correctness reviewer, so every surface names the repo's own. Any other
+`type: reviewer` agent in `.claude/agents/` runs ad hoc only (`/pipeline:run-reviewers <paths>`).
+What each agent reads besides its standard briefs is the config's `briefs` map.
 
 `/security-hunt` is not a roster agent and not part of the pipeline: the user types it.
 Changes to `.claude/` or the pipeline plugin do not enter the pipeline: run `pipeline-reviewer` via
