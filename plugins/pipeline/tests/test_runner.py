@@ -177,6 +177,12 @@ class RunnerTest(tp.Feature):
         self.assertIn("PASS", (self.run_dir / "REVIEW-01.md").read_text())
         self.assertNotIn("security", (self.run_dir / "METRICS.md").read_text())
 
+    def test_finishing_names_the_pr_body_draft(self):
+        r = self.runner()
+        r.run()
+
+        self.assertTrue(any(f"PR body: {self.run_dir / 'PR.md'}" in line for line in self.said), self.said)
+
     def test_starts_with_no_preflight_run_and_accepts_the_old_flags_as_no_ops(self):
         code, _ = self.go(no_preflight=False, no_docker=True)
 

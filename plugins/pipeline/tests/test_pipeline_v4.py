@@ -106,7 +106,7 @@ class SubIssueTest(V4Feature):
 
         self.assertTrue(self.state()["scenarios"]["SCENARIO-01"]["done"])
         self.assertIn("SCENARIO-02", out)
-        self.assertEqual(self.closed, [])  # already closed: not closed again
+        self.assertEqual(self.closed, [])
 
     def cut_off_after_writing_the_second(self):
         """The first scenario built and closed; the second's test line written, its issue still open."""
@@ -114,16 +114,56 @@ class SubIssueTest(V4Feature):
         self.built("SCENARIO-02", "`go/b_test.go` `TestUnshare`")
         self.states = {2: "CLOSED"}
 
-    def test_a_written_scenario_whose_issue_is_open_is_finished_and_its_issue_closed(self):
+    def pr(self):
+        return (pl.runs_of(self.spec_dir) / "PR.md").read_text()
+
+    def test_a_written_scenario_is_finished_and_its_closes_line_drafted_not_its_issue_closed(self):
         self.cut_off_after_writing_the_second()
 
         _, out = self.next()
 
-        self.assertEqual(self.closed, [(3, "Built: acceptance test `go/b_test.go` `TestUnshare`.")])
-        self.assertIn("closed its sub-issue #3", out)
-        self.assertTrue(self.state()["scenarios"]["SCENARIO-02"]["issue_closed"])
+        self.assertEqual(self.closed, [])
+        self.assertIn("Closes #3", self.pr())
+        self.assertIn("SCENARIO-02 is built — `Closes #3` is in", out)
+        self.assertIn(str(pl.runs_of(self.spec_dir) / "PR.md"), out)
+        self.assertTrue(self.state()["scenarios"]["SCENARIO-02"]["in_pr"])
 
-    def test_closing_a_sub_issue_names_the_product_spec_marks_it_leaves_stale(self):
+    def test_the_pr_draft_has_the_four_sections_and_lists_what_landed(self):
+        self.cut_off_after_writing_the_second()
+
+        self.next()
+
+        pr = self.pr()
+        heads = [l for l in pr.splitlines() if l.startswith("## ")]
+        self.assertEqual(heads, ["## What landed", "## Decisions", "## How it is tested", "## Still missing"])
+        self.assertIn("- SCENARIO-02 — Owner stops sharing: `go/b_test.go` `TestUnshare`", pr)
+        self.assertIn("D-1 (2026-11-25)", pr)  # the spec's decisions, to start from
+
+    def test_an_issue_closed_before_the_cursor_gets_no_closes_line(self):
+        self.cut_off_after_writing_the_second()
+
+        self.next()
+
+        self.assertNotIn("Closes #2", self.pr())
+
+    def test_the_feature_issue_is_closed_by_the_pr_once_every_scenario_is_built(self):
+        self.cut_off_after_writing_the_second()
+
+        self.next()
+
+        self.assertIn("Closes #1", self.pr())
+
+    def test_the_feature_issue_is_not_closed_while_a_scenario_is_unbuilt(self):
+        self.built("SCENARIO-01")
+        state = pl.load_state(self.spec_dir)
+        state["scenarios"]["SCENARIO-01"].update(done=True, in_pr=True)  # SCENARIO-02 not built
+
+        pl.pr_draft(self.spec_dir, "demo", state)
+
+        self.assertIn("Closes #2", self.pr())
+        self.assertNotIn("Closes #1", self.pr())
+
+    def test_a_built_scenario_names_the_product_spec_marks_it_leaves_stale(self):
         self.cut_off_after_writing_the_second()
         product = self.root / "docs" / "product"
         product.mkdir(parents=True, exist_ok=True)
@@ -132,28 +172,25 @@ class SubIssueTest(V4Feature):
 
         _, out = self.next()
 
-        self.assertIn("closed its sub-issue #3", out)
         self.assertIn("docs/product/sharing.md:3: still marks #3 not built", out)
+        self.assertIn("#3 closes when the PR merges", out)
         self.assertNotIn("#9", out)
 
-    def test_closing_a_sub_issue_with_no_mark_naming_it_says_nothing_more(self):
+    def test_a_built_scenario_with_no_mark_naming_it_says_nothing_more(self):
         self.cut_off_after_writing_the_second()
 
         _, out = self.next()
 
         self.assertNotIn("still marks", out)
 
-    def test_a_close_that_fails_is_said_and_tried_again_on_the_next_call(self):
+    def test_a_built_scenario_is_noted_once(self):
         self.cut_off_after_writing_the_second()
-        pl.CLOSE_ISSUE = lambda root, n, comment: "HTTP 502"
+        self.next()
 
-        _, out = self.next()
+        _, out = self.next("--drop-pending")
 
-        self.assertIn("could not close #3 for SCENARIO-02 (HTTP 502)", out)
-        self.assertFalse(self.state()["scenarios"]["SCENARIO-02"].get("issue_closed"))
-        pl.CLOSE_ISSUE = lambda root, n, comment: self.closed.append(n) or ""
-        self.next("--drop-pending")
-        self.assertEqual(self.closed, [3])
+        self.assertNotIn("SCENARIO-02 is built", out)
+        self.assertEqual(self.pr().count("Closes #3"), 1)
 
     def test_an_acceptance_line_with_trailing_text_is_not_a_tick(self):
         self.built("SCENARIO-01")

@@ -21,6 +21,9 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
   file-issues <slug|file.md> [--yes] [--pause S]  list issue drafts; --yes (the user's yes) files them
   open-issues <slug> [--yes] [--pause S]
                                     the spec's feature issue and one sub-issue per scenario; --yes creates them
+  claim [N] [--lane direct|light|full] [--yes]
+                                    where work starts: no N lists the open, unassigned, unblocked issues; with N,
+                                    the assignment (`--add-assignee @me`, plus the lane label); --yes runs it
   retro <slug> [--pr N ...] [--reply FILE]
                                     the feature's retro outside `next` (`/pipeline:retro`): without --reply,
                                     the pipeline-reviewer brief — from the ledger when .runs/<slug>/ has one,
@@ -193,7 +196,8 @@ V4_RE = re.compile(r"<!-- spec-check: v4 -->")
 SCENARIO_HEAD_RE = re.compile(r"^###\s+(SCENARIO-\d+[a-z]?)\b\s*(?:[—-]+\s*(.*))?$")
 SIZE_LINE_RE = re.compile(r"^Size:\s*(large|small)\b", re.I)
 ISSUE_LINE_RE = re.compile(r"^Issue:\s*(~|#(\d+))(\s*\(unlinked\))?\s*$")
-FEATURE_ISSUE_RE = re.compile(r"^-?\s*Feature issue:\s*(~|#(\d+))\s*$", re.M)
+# `(adopted)`: an existing issue (a captured `idea`) taken as the feature issue, not yet relabelled by `open-issues`.
+FEATURE_ISSUE_RE = re.compile(r"^-?\s*Feature issue:\s*(~|#(\d+))(\s*\(adopted\))?\s*$", re.M)
 
 
 class Refuse(Exception):
@@ -921,8 +925,18 @@ def draft_issues(spec_dir: Path, slug: str, found: list[dict], source: str) -> i
     return len(found)
 
 
+def feature_issue(spec_dir: Path) -> int | None:
+    """The feature issue's number from the spec's `## Links`, or None while it has none (or only a `~` claim)."""
+    spec = spec_file(spec_dir)
+    m = FEATURE_ISSUE_RE.search(section(spec.read_text(), "Links") or "") if spec.is_file() else None
+    return int(m.group(2)) if m and m.group(2) else None
+
+
 def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
-    """Append `## [ ]` issue-draft blocks to the feature's ISSUES.md, writing its header the first time."""
+    """Append `## [ ]` issue-draft blocks to the feature's ISSUES.md, writing its header the first time.
+    Each block ends `Found in #N`, N the feature issue, once the spec records one."""
+    if (number := feature_issue(spec_dir)) is not None:
+        blocks = [b.rstrip() + f"\n\nFound in #{number}" for b in blocks]
     path = runs_of(spec_dir) / ISSUES_FILE
     text = path.read_text().rstrip() if path.is_file() else (
         f"# {slug} — issues to file\n\nDrafted by `{script('pipeline.py')}`. Nothing here is on GitHub until the user "
@@ -1192,6 +1206,10 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     `Feature issue: ~`) and the number written after, so a run cut off part-way resumes with the rest and
     never creates twice; a claim left behind is reported for the user to check by hand. A sub-issue that
     was created but not linked under the feature issue says `(unlinked)`, and the next run links it.
+
+    The feature issue carries its lane (`lane:light` for an `**Area**: none` spec, else `lane:full`). One the
+    spec records as `Feature issue: #N (adopted)` — the captured `idea` the request came from — is relabelled
+    (`idea` → `feature` + lane + areas) instead of a new one created, and the line becomes `#N`.
     """
     spec_dir = spec_folder(root, slug)
     path = spec_file(spec_dir)
@@ -1200,6 +1218,7 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
         return 2
     found, missing = spec_check().area_files(root, text)
     areas = [f"area:{p.stem}" for p in found] + [f"area:{Path(m).stem}" for m in missing]
+    lane = "lane:light" if spec_check().no_area(text) else "lane:full"
     title = re.sub(r"^#\s*(?:Specification|Feature):\s*", "", next((l for l in text.splitlines() if l.startswith("# ")), f"# {slug}"))
     title = title.lstrip("# ").strip()
     rel = path.relative_to(root).as_posix()
@@ -1214,7 +1233,9 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     todo = [b for b in blocks if b["issue"] is None]
     relink = [b for b in blocks if b["unlinked"]]
     if not yes:
-        lines = ([f"- [{', '.join(['feature', *areas])}] {title}"] if not feature else []) \
+        lines = ([f"- [{', '.join(['feature', lane, *areas])}] {title}"] if not feature else []) \
+            + ([f"- relabel #{feature.group(2)}: idea → {', '.join(['feature', lane, *areas])}"]
+               if feature and feature.group(3) else []) \
             + ([f"- comment on the feature issue: {triage}"] if triage.is_file() and not posted else []) \
             + [f"- [{', '.join(['scenario', *areas])}] {b['id']} — {b['title']}" for b in todo] \
             + [f"- link #{b['issue']} ({b['id']}) under the feature issue" for b in relink]
@@ -1239,7 +1260,7 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
 
     if not feature:
         set_link(path, "Feature issue", "~")
-        number = create(title, ["feature", *areas], "\n".join([
+        number = create(title, ["feature", lane, *areas], "\n".join([
             feature_why(text, title), f"Design: [{rel}]({rel})", "State: approved, not built",
             f"Approach: one sub-issue per scenario, built in order by `{script('pipeline.py')} next`",
             "Done when: every sub-issue is closed and the gate has passed"]))
@@ -1253,6 +1274,15 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
         feature_no = number
     else:
         feature_no = int(feature.group(2))
+        if feature.group(3):
+            out = gh(root, "issue", "edit", str(feature_no), "--remove-label", "idea",
+                     *[a for l in ["feature", lane, *areas] for a in ("--add-label", l)])
+            if out.returncode == 0:
+                set_link(path, "Feature issue", f"#{feature_no}")
+                print(f"relabelled #{feature_no} — idea → feature, {lane}")
+            else:
+                failed += 1  # the line keeps `(adopted)`: the next run relabels it
+                print(f"gh issue edit failed on #{feature_no}: {(out.stderr or out.stdout).strip()}", file=sys.stderr)
     if triage.is_file() and not posted:
         out = gh(root, "issue", "comment", str(feature_no), "--body-file", str(triage))
         if out.returncode == 0:
@@ -1283,7 +1313,8 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
             scenario_why(b), f"Design: [{rel} → {b['id']}]({rel}#{anchor})", "State: not built",
             f"Approach: {b['action'] or 'see the scenario'}; " + ("an architect plans it" if b["size"] == "large"
                                                                   else "its first developer run plans it"),
-            f"Done when: its acceptance test passes and every case of {b['id']} has a test; the pipeline closes this"]))
+            f"Done when: its acceptance test passes and every case of {b['id']} has a test; the PR that builds "
+            "it closes this (`Closes #N`)"]))
         if number is None:
             return 1
         if not number:
@@ -1293,6 +1324,41 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
         print(f"opened #{number} — {b['id']}")
         failed += not link(number, b["id"])
     return 1 if failed or claimed else 0
+
+
+CLAIMABLE = "no:assignee -is:blocked"  # open issues nobody has claimed and no open issue blocks
+
+
+def claim(root: Path, number: int | None, lane: str | None, yes: bool) -> int:
+    """Where a session's work starts: list the claimable issues, or assign the chosen one to the session's user.
+
+    Without `number`, lists the open issues no one is assigned to and none blocks (a read). With it, shows the
+    `gh issue edit` that claims it — `--add-assignee @me`, and `--add-label lane:<lane>` when given — and runs it
+    only with `yes` (the user's go-ahead).
+    """
+    if number is None:
+        out = gh(root, "issue", "list", "--state", "open", "--search", CLAIMABLE, "--json", "number,title,labels",
+                 "--limit", "50")
+        if out.returncode != 0:
+            print(f"gh issue list failed: {(out.stderr or out.stdout).strip()}", file=sys.stderr)
+            return 1
+        issues = json.loads(out.stdout or "[]")
+        print("\n".join([f"{len(issues)} open, unassigned, unblocked issue(s) — put them to the user; claim the one "
+                         f"they choose with `{script('pipeline.py')} claim N --yes` on their go-ahead:", ""]
+                        + [f"- #{i['number']} {i['title']}" + (f" [{', '.join(l['name'] for l in i['labels'])}]"
+                                                              if i.get("labels") else "") for i in issues]))
+        return 0
+    edit = ["issue", "edit", str(number), "--add-assignee", "@me", *(["--add-label", f"lane:{lane}"] if lane else [])]
+    if not yes:
+        print(f"claim #{number} — run only on the user's go-ahead, with `claim {number}"
+              f"{f' --lane {lane}' if lane else ''} --yes`:\n\n  gh {' '.join(edit)}")
+        return 0
+    out = gh(root, *edit)
+    if out.returncode != 0:
+        print(f"gh issue edit failed on #{number}: {(out.stderr or out.stdout).strip()}", file=sys.stderr)
+        return 1
+    print(f"claimed #{number}" + (f" ({'lane:' + lane})" if lane else ""))
+    return 0
 
 
 def feature_why(text: str, title: str) -> str:
@@ -1327,38 +1393,65 @@ def gh_issue_states(root: Path, numbers: list) -> dict[int, str]:
     return out
 
 
-def gh_close_issue(root: Path, number: int, comment: str) -> str:
-    """Close one issue with a comment; "" when it closed, else why not."""
-    got = subprocess.run(["gh", "issue", "close", str(number), "--comment", comment], cwd=root,
-                         capture_output=True, text=True)
-    return "" if got.returncode == 0 else (got.stderr or got.stdout).strip() or f"exit {got.returncode}"
-
-
-# Swapped out by the tests: nothing else in this file talks to GitHub to read or close a sub-issue.
+# Swapped out by the tests: nothing else in this file talks to GitHub to read a sub-issue's state.
 ISSUE_STATES = gh_issue_states
-CLOSE_ISSUE = gh_close_issue
+PR_FILE = "PR.md"  # in the run folder: the pull request's body, its `Closes #N` lines written by `next`
 
 
-def close_scenario_issue(root: Path, spec_dir: Path, unit: str, s: dict) -> None:
-    """A scenario the pipeline has recorded done closes its sub-issue; a failure is said and retried next call."""
-    if s.get("issue_closed"):
-        return
+def built_units(state: dict) -> list[str]:
+    """The scenarios `next` has recorded done, and those folded into one that is, in spec order."""
+    sc = state["scenarios"]
+    return [u for u in state["order"] if sc[u]["done"] or (sc[u]["folded_into"] and sc[sc[u]["folded_into"]]["done"])]
+
+
+def pr_draft(spec_dir: Path, slug: str, state: dict) -> Path:
+    """Write the PR body draft, .runs/<slug>/PR.md: *What landed* (the scenarios built in this PR and their
+    `Closes #N` lines — the feature issue's too once every scenario is built), *Decisions*, *How it is
+    tested* and *Still missing*. The pipeline closes no issue itself: the PR does, on merge. Only *What
+    landed* is rewritten on later calls; the other sections are the writer's once the file exists.
+    """
     text = spec_file(spec_dir).read_text()
-    block = next((b for b in scenario_blocks(text) if b["id"] == unit), None)
+    blocks = {b["id"]: b for b in scenario_blocks(text)}
+    sc = state["scenarios"]
+    built = built_units(state)
+    ours = [u for u in built if sc[u].get("in_pr")]
+    landed = [f"- {u} — {blocks[u]['title'] or u}: "
+              + (blocks[u]["acceptance"] or f"built by {sc[u]['folded_into']}'s plan") for u in ours]
+    closes = [f"Closes #{blocks[u]['issue']}" for u in ours if isinstance(blocks[u]["issue"], int)]
+    if (number := feature_issue(spec_dir)) is not None and len(built) == len(state["order"]):
+        closes.append(f"Closes #{number}")
+    path = runs_of(spec_dir) / PR_FILE
+    if not path.is_file():
+        decisions = (section(text, "Decisions") or "").strip()
+        path.write_text("\n".join([
+            f"<!-- The PR body for `{slug}`, drafted by `{script('pipeline.py')} next`: it rewrites *What landed* "
+            "as scenarios are built; edit the rest. Each `Closes #N` closes that issue when the PR merges. -->", "",
+            "## What landed", "", "## Decisions", "", decisions or "- none beyond the spec", "",
+            "## How it is tested", "", "- <each scenario's acceptance test (above), what else ran: the gate, the race gate>", "",
+            "## Still missing", "", "- <unbuilt scenarios, open issue drafts (ISSUES.md), findings accepted open — or nothing>", ""]))
+    replace_section(path, "## What landed", "\n".join([*(landed or ["- nothing yet"]), "", *closes]))
+    return path
+
+
+def record_built(root: Path, spec_dir: Path, slug: str, unit: str, s: dict, state: dict) -> None:
+    """A scenario `next` has recorded done: its sub-issue's `Closes #N` goes into the PR body draft, once.
+
+    No issue is closed here; the PR closes it on merge. A sub-issue already closed when the cursor was
+    created (`issue_closed`) shipped in an earlier PR and gets no line.
+    """
+    if s.get("issue_closed") or s.get("in_pr"):
+        return
+    block = next((b for b in scenario_blocks(spec_file(spec_dir).read_text()) if b["id"] == unit), None)
     if not block or not isinstance(block["issue"], int):
         return
-    said = (f"Built by {s['folded_into']}'s plan." if s.get("folded_into")
-            else f"Built: acceptance test {block['acceptance'] or '(none recorded)'}.")
-    why = CLOSE_ISSUE(root, block["issue"], said)
-    if why:
-        print(f"note: could not close #{block['issue']} for {unit} ({why}); the next call tries again\n")
-        return
-    s["issue_closed"] = True
-    print(f"note: {unit} is done — closed its sub-issue #{block['issue']}\n")
+    s["in_pr"] = True
+    path = pr_draft(spec_dir, slug, state)
+    print(f"note: {unit} is built — `Closes #{block['issue']}` is in {path}: its sub-issue closes when the PR merges\n")
     stale = [f"{rel}:{n}" for rel, n, issues in not_built_marks(root) if block["issue"] in issues]
     if stale:
         print(f"note: the product spec still marks #{block['issue']} not built — remove each mark in this "
-              "change (not-built fails on a mark naming a closed issue):\n"
+              f"change (#{block['issue']} closes when the PR merges, and not-built fails on a mark naming a "
+              "closed issue):\n"
               + "\n".join(f"- {where}: still marks #{block['issue']} not built" for where in stale) + "\n")
 
 
@@ -1647,7 +1740,8 @@ NO_LEDGER = "no ledger: single-session"
 
 def write_retro(root: Path, slug: str, reply_text: str) -> list[str]:
     """Save the pipeline-reviewer's retro reply as docs/specs/<slug>.retro.md, then hold its rule
-    candidates to the recurrence threshold (`retro-stats.py --fix`). Returns notes for the orchestrator.
+    candidates to the recurrence threshold (`retro-stats.py --fix`) and say when a process review is due
+    (`retro-stats.py --due`). Returns notes for the orchestrator.
 
     With a ledger the feature's METRICS.md goes under `## Metrics`; without one (a single-session
     feature) `## Cost by stage` is set to say so, whatever the reply put there.
@@ -1665,7 +1759,10 @@ def write_retro(root: Path, slug: str, reply_text: str) -> list[str]:
         replace_section(retro, "## Cost by stage", NO_LEDGER)
     notes = [f"wrote {retro.relative_to(root)}"]
     fixed = subprocess.run([str(HERE / "retro-stats.py"), "--fix", slug], cwd=root, capture_output=True, text=True)
-    return notes + [f"retro rule candidate {line}" for line in fixed.stdout.splitlines() if line.strip()]
+    notes += [f"retro rule candidate {line}" for line in fixed.stdout.splitlines() if line.strip()]
+    # Every fifth Full-lane feature: the open rule candidates are decided, none carried over (docs/process-reviews.md).
+    due = subprocess.run([str(HERE / "retro-stats.py"), "--due"], cwd=root, capture_output=True, text=True)
+    return notes + [line for line in due.stdout.splitlines() if line.strip()]
 
 
 def retro_brief(root: Path, slug: str, work: Path, evidence: str = "") -> str:
@@ -1891,7 +1988,7 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
     for unit in state["order"]:
         s = state["scenarios"][unit]
         if s["done"] or (s["folded_into"] and state["scenarios"][s["folded_into"]]["done"]):
-            close_scenario_issue(root, spec_dir, unit, s)
+            record_built(root, spec_dir, slug, unit, s, state)
         if s["done"] or s["folded_into"]:
             continue
         small = s["size"] == "small"
@@ -2028,7 +2125,7 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
         if s["checkpoint"] is None and not CHECKPOINT:
             finish_checkpoint(spec_dir, slug, unit, s, [], ran=False)
             print(f"note: {unit} is ticked — the checkpoint is off (`CHECKPOINT`), so it is done\n")
-            close_scenario_issue(root, spec_dir, unit, s)
+            record_built(root, spec_dir, slug, unit, s, state)
             continue
         if s["checkpoint"] is None:
             print(f"stage: checkpoint — {position}\nwhy: {unit} is ticked and has no checkpoint\n")
@@ -2177,6 +2274,10 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
         spawn(state, "retro", "feature", tag_line("final", "feature", slug), ["pipeline-reviewer"], [block])
         return 0
     print(f"DONE — `{slug}` has shipped and its retro is written ({retro_file(spec_dir).relative_to(root)}).")
+    draft = pr_draft(spec_dir, slug, state)
+    print(f"\nPR body: {draft} — its `Closes #N` lines close the built scenarios' sub-issues"
+          + (" and the feature issue" if feature_issue(spec_dir) is not None else "") + " when the PR merges.")
+    ACTION["pr_body"] = str(draft)
     if drafts := open_drafts(spec_dir):
         print(f"\nShow the user the {len(drafts)} issue draft(s) in `{runs_of(spec_dir) / ISSUES_FILE}` "
               f"(`{script('pipeline.py')} file-issues {slug}` lists them). On their yes: `file-issues {slug} --yes`.")
@@ -2244,6 +2345,10 @@ def build_parser() -> argparse.ArgumentParser:
     oi.add_argument("slug")
     oi.add_argument("--pause", type=float, default=0.0, metavar="SECONDS", help="wait between issues")
     oi.add_argument("--yes", action="store_true", help="the user approved the spec: create what is listed")
+    cl = sub.add_parser("claim", help="list the claimable issues; with N, assign it to you (--yes runs it)")
+    cl.add_argument("number", nargs="?", type=int, metavar="N")
+    cl.add_argument("--lane", choices=("direct", "light", "full"), help="also label the issue with its lane")
+    cl.add_argument("--yes", action="store_true", help="the user said go: run the `gh issue edit`")
     d = sub.add_parser("debt", help="a debt found while building and not fixed: an issue draft in ISSUES.md")
     d.add_argument("slug")
     d.add_argument("title", help="the issue's title")
@@ -2330,6 +2435,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
         return file_issues(root, args.slug, args.yes, args.pause)
     if args.cmd == "open-issues":
         return open_issues(root, args.slug, args.yes, args.pause)
+    if args.cmd == "claim":
+        return claim(root, args.number, args.lane, args.yes)
     if args.cmd == "batch":
         units = None
         if args.units is not None:

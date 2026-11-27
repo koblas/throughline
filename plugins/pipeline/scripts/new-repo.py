@@ -257,6 +257,7 @@ def contents(a: dict) -> dict[str, str]:
     out = {
         "CLAUDE.md": render(template(f"CLAUDE.{a['kind']}.md"), values),
         "SECURITY.md": render(template("SECURITY.md"), values),
+        ".github/pull_request_template.md": template("pull_request_template.md"),
         ".github/workflows/checks.yaml": render(template("checks.yaml"), {
             "setup": ci_setup(a["surfaces"]),
             "verify_run": "\n".join(" " * 10 + v for v in a["verify"]),

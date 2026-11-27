@@ -1057,6 +1057,8 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
             kind = action.get("kind")
             if kind == "done":
                 self.say(f"done — ${self.spent():.2f} in {len(self.runs())} runs")
+                if draft := action.get("pr_body"):
+                    self.say(f"PR body: {draft} — its `Closes #N` lines close the sub-issues when the PR merges")
                 if touched := action.get("sensitive"):
                     self.say(f"this feature changed {len(touched)} security-sensitive path(s); `/security-hunt` "
                              "was not run — it is yours to run:\n  " + "\n  ".join(touched))

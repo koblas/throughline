@@ -74,10 +74,15 @@ gate round (`/pipeline:run-reviewers` pipeline mode: diff, the two gate reviewer
 `spec-check --run`; every MINOR and NIT drafted to `ISSUES.md`) · **7a** a `refuter` pass on the round's reviewer MAJORs, off by default
 (`pipeline.py` `REFUTE_MAJORS`) · `REVIEW-NN.md`, its verdict and its `METRICS.md` row ·
 **8** the one fix pass · **9** one re-gate on the fix only · **10** the token ledger and the
-pass conditions scored, then the retro (`docs/specs/<slug>.retro.md`). A scenario's sub-issue
-is closed by `next` itself once the scenario is recorded done. At `DONE` it names the
-issue drafts: show them to the user, and file them only on their yes (`pipeline.py file-issues
-<slug> --yes`).
+pass conditions scored, then the retro (`docs/specs/<slug>.retro.md`). No issue is closed by
+`next`: a scenario recorded done gets its sub-issue's `Closes #N` in the PR body draft,
+`.runs/<slug>/PR.md` (the feature issue's too once every scenario is built), and the PR closes
+them on merge. At `DONE` it names that draft and the issue drafts: show them to the user, and file
+the drafts only on their yes (`pipeline.py file-issues <slug> --yes`). A retro that brings the
+Full-lane retros since the last process review to five says a **process review** is due: read the
+retros, decide each open rule candidate — adopt it as a script, or drop it — in
+`docs/process-reviews.md` (`retro-stats.py --process-review` lists them; `--check` refuses the
+entry while one is undecided). Candidates do not carry over undecided.
 
 ### Without a chat session — `scripts/runner.py <slug>`
 
@@ -158,8 +163,9 @@ session at the same time.
   mid-feature, pass `next --base <ref before the feature>` once.
 - **Resuming a feature that has no `PIPELINE.json`.** Scenarios already ticked are taken as
   built and checkpointed; `next` says which. A scenario counts as built only when it has its
-  `Acceptance test:` line and its sub-issue is closed on GitHub; a line with the issue still open
-  is finished and closed by the next call.
+  `Acceptance test:` line and its sub-issue is closed on GitHub (its PR merged); a line with the
+  issue still open is finished again by the next call (its checkpoint, when on) and its `Closes #N`
+  written into `.runs/<slug>/PR.md`.
 
 ## Direct lane: batches
 

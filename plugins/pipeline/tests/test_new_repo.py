@@ -172,6 +172,21 @@ class ProductRepoTest(Repo):
                 self.assertNotRegex(path.read_text(), r"\{\{\w+\}\}", path)
 
 
+class PullRequestTemplateTest(Repo):
+    def test_every_repo_gets_a_pr_template_with_the_four_sections_and_a_closes_line(self):
+        for answers in (PRODUCT, INFRA):
+            with self.subTest(kind=answers["kind"]):
+                (self.root / ".github" / "pull_request_template.md").unlink(missing_ok=True)
+                out = self.files(answers)
+                self.assertIn("- .github/pull_request_template.md: create", out.stdout)
+                self.files(answers, "--yes")
+
+                body = self.read(".github/pull_request_template.md")
+                self.assertEqual(["## What landed", "## Decisions", "## How it is tested", "## Still missing"],
+                                 [l for l in body.splitlines() if l.startswith("## ")])
+                self.assertRegex(body, r"(?m)^Closes #")
+
+
 class InfrastructureRepoTest(Repo):
     def test_it_gets_the_direct_lane_and_no_pipeline_config(self):
         out = self.files(INFRA, "--yes")
@@ -462,8 +477,12 @@ class LabelDataTest(unittest.TestCase):
 
     def test_the_labels_the_pipeline_files_issues_with_are_in_the_product_set(self):
         source = (PLUGIN / "scripts" / "pipeline.py").read_text()
-        used = set(re.findall(r"\['(feature|scenario)', \*areas\]", source))
+        used = set(re.findall(r"\['(feature|scenario)', (?:lane, )?\*areas\]", source))
         self.assertEqual({"feature", "scenario"}, used)
+        lanes = set(re.findall(r'"(lane:\w+)"', source))  # open-issues' feature-issue labels
+        lanes |= {f"lane:{c}" for c in re.findall(r'"(\w+)"', re.search(r'"--lane", choices=\(([^)]*)\)', source)[1])}
+        self.assertEqual({"lane:full", "lane:light", "lane:direct"}, lanes)
+        used |= lanes
         self.assertLessEqual(used, {lab["name"] for lab in nr.label_set("product")})
 
 
