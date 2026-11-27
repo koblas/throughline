@@ -110,6 +110,21 @@ class SessionContextTest(unittest.TestCase):
 
         self.assertNotIn("Unfiled issue drafts", run(self.tmp).stdout)
 
+    def test_a_repo_without_a_repo_brief_is_told_once(self):
+        self.configure()
+
+        out = run(self.tmp).stdout
+
+        self.assertEqual(1, out.count("has no `.claude/briefs/repo.md`"))
+        self.assertIn("repo-brief.md", out)
+
+    def test_a_repo_with_a_repo_brief_hears_nothing_about_it(self):
+        self.configure()
+        (self.tmp / ".claude" / "briefs").mkdir()
+        (self.tmp / ".claude" / "briefs" / "repo.md").write_text("# repo\n")
+
+        self.assertNotIn("has no `.claude/briefs/repo.md`", run(self.tmp).stdout)
+
     def test_the_session_start_hook_runs_it(self):
         hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["SessionStart"]
         commands = [h["command"] for group in hooks for h in group["hooks"]]

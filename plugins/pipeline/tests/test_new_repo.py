@@ -169,6 +169,14 @@ class ProductRepoTest(Repo):
         self.assertIn("- docs/specs/README.md: create", out.stdout)
         self.assertIn("docs/specs/<slug>.md", self.read("docs/specs/README.md"))
 
+    def test_it_starts_the_repo_brief_every_agent_reads(self):
+        out = self.files(PRODUCT, "--yes")
+
+        self.assertIn("- .claude/briefs/repo.md: create", out.stdout)
+        brief = self.read(".claude/briefs/repo.md")
+        self.assertTrue(brief.startswith("# acme — "), brief[:40])
+        self.assertIn("## For architect and developer", brief)
+
     def test_it_says_which_gate_reviewers_the_repo_must_still_create(self):
         self.put(".claude/agents/correctness-reviewer.md", "---\nname: correctness-reviewer\n---\n")
 
@@ -198,6 +206,21 @@ class PullRequestTemplateTest(Repo):
                 self.assertEqual(["## What landed", "## Decisions", "## How it is tested", "## Still missing"],
                                  [l for l in body.splitlines() if l.startswith("## ")])
                 self.assertRegex(body, r"(?m)^Closes #")
+
+
+class RepoBriefTemplateTest(unittest.TestCase):
+    """Every `repo.md` → *Section* an agent or brief cites is a heading of the template new repos get."""
+
+    def test_each_cited_section_is_a_heading_of_the_template(self):
+        cited = set()
+        for path in [*PLUGIN.glob("agents/*.md"), *PLUGIN.glob("briefs/*.md"), *PLUGIN.glob("commands/*.md"),
+                     *PLUGIN.glob("skills/*/SKILL.md")]:
+            for m in re.finditer(r"repo\.md`?\s*→\s*\*([^*]+)\*", path.read_text(), re.S):
+                cited.add(" ".join(m.group(1).split()))
+        headings = set(re.findall(r"^## (.+)$", (PLUGIN / "templates" / "new-repo" / "repo-brief.md").read_text(), re.M))
+
+        self.assertTrue(cited, "no citation found: the pattern no longer matches how agents cite repo.md")
+        self.assertEqual(set(), cited - headings)
 
 
 class InfrastructureRepoTest(Repo):

@@ -272,6 +272,7 @@ def contents(a: dict) -> dict[str, str]:
         out[".claude/pipeline.json"] = json.dumps(pipeline_config(a["surfaces"]), indent=2) + "\n"
         out["docs/product/README.md"] = render(template("product-README.md"), values)
         out["docs/specs/README.md"] = render(template("specs-README.md"), values)
+        out[".claude/briefs/repo.md"] = render(template("repo-brief.md"), values)
     return out
 
 
