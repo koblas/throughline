@@ -1,0 +1,130 @@
+/* The landing page (docs/index.md). Everything is scoped to .landing so
+   no other page changes. Colors come from the theme's variables, so light
+   and dark both work. */
+
+.landing {
+  max-width: 58rem;
+  margin: 0 auto;
+}
+
+.landing-hero {
+  text-align: center;
+  padding: 2.5rem 0 2rem;
+}
+
+.landing-kicker {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-primary-fg-color);
+  margin: 0 0 0.75rem;
+}
+
+.md-typeset h1.landing-title {
+  font-size: 2.6rem;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 auto 1rem;
+  max-width: 46rem;
+  color: var(--md-default-fg-color);
+}
+
+.landing-lead {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  max-width: 44rem;
+  margin: 0 auto 1.5rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.landing-hero .md-button,
+.landing-close .md-button {
+  margin: 0.25rem 0.35rem;
+}
+
+.landing-note {
+  font-size: 0.75rem;
+  color: var(--md-default-fg-color--light);
+  margin: 1.25rem auto 0;
+  max-width: 40rem;
+}
+
+.landing-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.landing-stat p {
+  margin: 0;
+}
+
+.landing-stat-n,
+.landing-stat-l {
+  display: block;
+}
+
+.landing-stat-n {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.landing-stat-l {
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--md-default-fg-color--light);
+}
+
+.landing-caption,
+.landing-sub {
+  font-size: 0.85rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset h2.landing-h2 {
+  margin-top: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Four cards sit two by two, never three and one. */
+.md-typeset .landing-two.grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+
+.landing .mermaid {
+  text-align: center;
+}
+
+.landing-close {
+  text-align: center;
+  margin: 3rem 0 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-typeset .landing-close h2.landing-h2 {
+  margin-top: 0;
+}
+
+.landing-close .highlight {
+  max-width: 30rem;
+  margin: 1rem auto;
+  text-align: left;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .md-typeset h1.landing-title {
+    font-size: 2rem;
+  }
+}

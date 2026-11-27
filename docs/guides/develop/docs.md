@@ -13,12 +13,15 @@ This site is built by [Zensical](https://zensical.org), the successor to Materia
 
 One audience per page.
 
+`docs/examples/` holds complete, annotated artifacts: a whole spec, a whole `pipeline.json`, a whole session. An example page is written like reference: it shows and annotates, and links a how-to for the steps. `docs/index.md` is the landing page; it carries the case for the pipeline and links out.
+
 ## 2. Write it
 
 - Add the page to `nav:` in `mkdocs.yml` (`docs/check.py` fails otherwise).
 - Use content tabs for alternatives (`=== "For yourself"` / `=== "For a repo"`), admonitions for warnings.
 - A behavior change usually touches one how-to and one reference page; a new feature also gets a concept paragraph.
 - Update the pages, not the README, when behavior changes.
+- Give a complete `pipeline.json` example the fence title `.claude/pipeline.json`: `docs/check.py` validates every block that has it.
 - Link files in the plugin (briefs, scripts) as GitHub URLs on `main`: the site does not carry them.
 
 ## 3. Write it in the site's voice
@@ -37,7 +40,7 @@ The full rules, which Claude Code loads when it edits a page, are in [`.claude/r
 make docs
 ```
 
-runs `docs/check.py`, then builds strictly: a broken link or anchor fails. `docs/check.py` fails when a command, agent or skill in `plugins/pipeline/` has no entry on its reference page, when a key `pipeline_config.py` validates is missing from the [pipeline.json reference](../../reference/pipeline-json.md), or when a page is missing from the nav.
+runs `docs/check.py`, then builds strictly: a broken link or anchor fails. `docs/check.py` fails when a command, agent, skill, `pipeline.py` subcommand or hook in `plugins/pipeline/` has no entry on its reference page, when a key `pipeline_config.py` validates is missing from the [pipeline.json reference](../../reference/pipeline-json.md), when a `pipeline.json` example block does not pass the plugin's own validator, or when a page is missing from the nav.
 
 ```bash
 make docs-serve

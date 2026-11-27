@@ -29,7 +29,7 @@ flowchart LR
   C --> R[retro]
 ```
 
-`product-vision` writes the surface-and-copy ruling into `docs/product/<area>.md`. The feature spec is `docs/specs/<slug>.md`, with one sub-issue per scenario. Per scenario, the `architect` writes a checklist (for large scenarios only) and the `developer` implements it. The gate runs a correctness reviewer and a test reviewer for each surface the diff touches. The `refuter` tries to disprove each MAJOR finding before it costs a fix pass. The Light lane runs the same order without `product-vision`.
+`product-vision` writes the surface-and-copy ruling into `docs/product/<area>.md`. The feature spec is `docs/specs/<slug>.md`, with one sub-issue per scenario. Per scenario, the `architect` writes a checklist (for large scenarios only) and the `developer` implements it. The gate runs a correctness reviewer and a test reviewer for each surface the diff touches. The `refuter` tries to disprove each MAJOR finding before it costs a fix pass. The Light lane runs the same order without `product-vision`. [Scenarios and tests](scenarios-and-tests.md) covers the build, and [The gate](the-gate.md) the review.
 
 ## Two pauses
 
@@ -38,7 +38,7 @@ The pipeline stops for the user twice, and only twice:
 - **Kickoff**, after triage and before any product spec or scenario: confirm what was understood, answer the open questions, and choose to run here or unattended.
 - **Spec approval**, before the feature spec is written and its issues opened.
 
-Everything after approval continues without asking. Pass conditions and the feature budget are defaults in `.claude/pipeline.json`, not questions. `pipeline.py next` refuses a spec that lacks the kickoff's answers or its `**Approved**:` line.
+Everything after approval continues without asking. Pass conditions and the feature budget are defaults in `.claude/pipeline.json`, not questions. `pipeline.py next` refuses a spec that lacks the kickoff's answers or its `**Approved**:` line. After approval the build runs in the session or under the unattended runner: [The conductor and the runner](the-runner.md).
 
 ## Nothing ships untested
 

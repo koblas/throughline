@@ -1,6 +1,6 @@
 # How to set up for development
 
-The plugin's scripts need Python 3.12 or later. Many tests drive `go`, `npx`, `git` and `ps` in scratch repos, so those must be on `PATH`. The documentation site needs [`uv`](https://docs.astral.sh/uv/).
+The plugin's scripts need Python 3.12 or later. The tests need only Python and `git`: every toolchain they touch is faked. The documentation site needs [`uv`](https://docs.astral.sh/uv/).
 
 ## 1. Run the tests
 

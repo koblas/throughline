@@ -22,6 +22,11 @@ once it is there. Model pages: `docs/guides/install/install.md`,
   will see…". No imperatives.
 - Reference: "X does Y" in the code's own words. Never "you should" or "set
   X to".
+- Example (`docs/examples/`): the artifact first, whole, then "What to
+  notice" in the reference register. A made-up feature is called made up.
+- Landing (`docs/index.md`): states the problem and the mechanism in plain
+  declaratives. It may address the reader; it still uses no marketing
+  adjectives, and every number on it is one the code or a brief states.
 
 ## Sentences
 

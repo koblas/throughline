@@ -9,6 +9,10 @@ Fails, naming each gap, when:
   `docs/reference/agents.md` or `docs/reference/skills.md`;
 - a key `pipeline_config.py` validates (each `_need(path, <obj>, "<key>", ...)`) is not in
   backticks on `docs/reference/pipeline-json.md`;
+- a `pipeline.py` subcommand (each `add_parser("<name>"`) is not in backticks on
+  `docs/reference/scripts.md`, or a hook event of `hooks/hooks.json` is not on `docs/reference/hooks.md`;
+- a ```json title=".claude/pipeline.json"``` block on any page does not pass the plugin's own
+  `pipeline_config.validate`: the examples are complete files, and they stay valid;
 - a page under `docs/` is not in `mkdocs.yml`'s `nav`;
 - a page links a path inside the plugin or a repo's run ledger (`briefs/`, `.runs/`) relatively:
   the site does not carry those files, so the link is a GitHub URL.
@@ -18,6 +22,8 @@ stdlib only.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -49,6 +55,33 @@ def config_keys() -> set[str]:
     return keys
 
 
+def subcommands() -> set[str]:
+    src = (PLUGIN / "scripts" / "pipeline.py").read_text()
+    names = set(re.findall(r'sub\.add_parser\("([a-z-]+)"', src))
+    # Subcommands added in a loop: `for name, text in (("plan-check", "…"), ("unlock", "…")):`.
+    for group in re.findall(r"^\s*for name, text in \((.*?)\):\n\s*x = sub\.add_parser\(name", src, re.M | re.S):
+        names.update(re.findall(r'\("([a-z-]+)",', group))
+    return names
+
+
+def config_examples() -> list[tuple[str, int, str]]:
+    """(page, line, text) of every ```json title=".claude/pipeline.json" block."""
+    out = []
+    for page in sorted(DOCS.rglob("*.md")):
+        text = page.read_text()
+        for m in re.finditer(r'^```json title="\.claude/pipeline\.json"\n(.*?)^```', text, re.M | re.S):
+            out.append((page.relative_to(ROOT).as_posix(), text[:m.start()].count("\n") + 1, m.group(1)))
+    return out
+
+
+def config_module():
+    spec = importlib.util.spec_from_file_location("pipeline_config", PLUGIN / "scripts" / "pipeline_config.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pipeline_config"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def nav_pages() -> set[str]:
     nav = (ROOT / "mkdocs.yml").read_text().split("\nnav:", 1)[1]
     return set(re.findall(r"([\w./-]+\.md)\s*$", nav, re.M))
@@ -75,6 +108,23 @@ def main() -> int:
     for key in sorted(config_keys()):
         if not re.search(rf"`(?:[^`\s]*\.)?{key}`", ref):  # `key`, or nested: `runner.file_issues`
             errors.append(f"pipeline.json key `{key}` (pipeline_config.py) is not on docs/reference/pipeline-json.md")
+
+    scripts = (DOCS / "reference" / "scripts.md").read_text()
+    for name in sorted(subcommands()):
+        if not re.search(rf"`{name}[ `]", scripts):
+            errors.append(f"pipeline.py subcommand `{name}` is not on docs/reference/scripts.md")
+
+    hooks = (DOCS / "reference" / "hooks.md").read_text()
+    for event in json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]:
+        if f"`{event}`" not in hooks:
+            errors.append(f"hook event `{event}` (hooks/hooks.json) is not on docs/reference/hooks.md")
+
+    pc = config_module()
+    for page, line, text in config_examples():
+        try:
+            pc.validate(Path(f"{page}:{line}"), json.loads(text))
+        except (json.JSONDecodeError, pc.ConfigError) as why:
+            errors.append(f"{page}:{line}: the pipeline.json example is not valid: {why}")
 
     nav = nav_pages()
     for page in sorted(DOCS.rglob("*.md")):

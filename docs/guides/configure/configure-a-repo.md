@@ -6,7 +6,7 @@ The pipeline's scripts read their config from the repo they run in, never from b
 
 Name each surface: a part of the repo with its own language and toolchain. Each surface gets its `language`, `root`, `production` and `tests` globs, and its `reviewers`. Then set the repo-wide keys: `pass_conditions`, `feature_budget_usd`, `security_paths` and `build_definitions`. Every key is on the [pipeline.json reference](../../reference/pipeline-json.md).
 
-A complete example is the test fixture [`plugins/pipeline/tests/fixtures/pipeline.json`](https://github.com/koblas/throughline/blob/main/plugins/pipeline/tests/fixtures/pipeline.json).
+[pipeline.json for four repos](../../examples/pipeline-json.md) has complete files to start from. The largest example is the test fixture [`plugins/pipeline/tests/fixtures/pipeline.json`](https://github.com/koblas/throughline/blob/main/plugins/pipeline/tests/fixtures/pipeline.json).
 
 ## 2. Pick the mode
 
@@ -14,7 +14,7 @@ Leave `mode` out for the multi-agent pipeline. Set `"mode": "single-session"` to
 
 ## 3. Add a language the plugin does not handle
 
-`go` and `ts` are built in. For any other `language`, set the surface's `adapter` to a command, run from the repo root, that speaks the protocol in [`adapters.py`](https://github.com/koblas/throughline/blob/main/plugins/pipeline/scripts/adapters.py).
+`go` and `ts` are built in. For any other `language`, set the surface's `adapter` to a command, run from the repo root, that speaks the adapter protocol: [How to add a language](add-a-language.md).
 
 ## 4. Write the runner's permission profile
 
