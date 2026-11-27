@@ -33,7 +33,7 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
                                     else from the feature's merged PRs on GitHub; with it, writes the retro
   debt <slug> TITLE [--body T] [--label L ...] [--scenario SCENARIO-NN]
                                     a debt found while building and not fixed: an issue draft in
-                                    .runs/<slug>/ISSUES.md at once, filed with file-issues on the user's yes
+                                    its ISSUES.md at once (in the git common dir, outside the worktree), filed with file-issues on the user's yes
   batch <slug> [--units A,B | --from-file F] [--done UNIT --tests CMD] [--found TITLE [--body T] [--label L ...]]
                                     the Direct lane: a mechanical migration's checklist, .runs/<slug>/BATCH.md,
                                     one unit per package; prints the next unit (exit 3 when all are done)
@@ -65,10 +65,12 @@ Exit status: 0 when an action was printed, 2 when it refused, 3 when the feature
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -120,6 +122,7 @@ STATE_FILE = "PIPELINE.json"
 # Findings below MAJOR, and what a capped gate leaves open, as GitHub issues not yet filed: nothing in it
 # reaches GitHub until the user says yes and `file-issues --yes` runs.
 ISSUES_FILE = "ISSUES.md"
+DRAFTS_DIR = cfg.DRAFTS_DIR  # under the git common directory: `drafts_root()`
 DRAFT_RE = re.compile(r"^## \[( |x|~)\] (.+?)(?: — (https://\S+))?$")
 SEVERITIES = ("BLOCKER", "MAJOR", "MINOR", "NIT")
 BUILD_BATCHES_PER_RUN = 3
@@ -199,6 +202,9 @@ V4_RE = re.compile(r"<!-- spec-check: v4 -->")
 SCENARIO_HEAD_RE = re.compile(r"^###\s+(SCENARIO-\d+[a-z]?)\b\s*(?:[—-]+\s*(.*))?$")
 SIZE_LINE_RE = re.compile(r"^Size:\s*(large|small)\b", re.I)
 ISSUE_LINE_RE = re.compile(r"^Issue:\s*(~|#(\d+))(\s*\(unlinked\))?\s*$")
+# Written by `fold`: the scenario is delivered by another's plan, so it never gets an `Acceptance test:` line
+# of its own, and its sub-issue is closed by that PR. Kept in the spec so a fresh cursor knows it too.
+FOLDED_LINE_RE = re.compile(r"^Folded into:\s*(\S+)\s*$")
 # `(adopted)`: an existing issue (a captured `idea`) taken as the feature issue, not yet relabelled by `open-issues`.
 FEATURE_ISSUE_RE = re.compile(r"^-?\s*Feature issue:\s*(~|#(\d+))(\s*\(adopted\))?\s*$", re.M)
 
@@ -434,13 +440,45 @@ def spec_check():
 def runs_of(spec_dir: Path, make: bool = True) -> Path:
     """The feature's run output: `.runs/<slug>/` at the repo root, gitignored.
 
-    The cursor, plans, review and checkpoint reports, METRICS.md, RUNS.jsonl, MUTANTS.json, STATE.md
-    and ISSUES.md live here; only the specification and the retro are committed.
+    The cursor, plans, review and checkpoint reports, METRICS.md, RUNS.jsonl, MUTANTS.json and STATE.md
+    live here (the issue drafts do not: `issues_file()`); only the specification and the retro are committed.
     """
     out = spec_dir.parents[2] / RUNS_DIR / spec_dir.name
     if make:  # a reader that only looks (a status scan over every feature) passes make=False
         out.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def drafts_root(root: Path) -> Path:
+    """Where every feature's issue drafts live: `<git common dir>/pipeline/`, outside every worktree.
+
+    Found work must outlive the worktree it was found in: a worktree is made fresh per feature and
+    removed after, and with it `.runs/`. The common git directory is shared by all the repo's
+    worktrees and survives `git worktree remove`; it is never committed. `session-context.py` lists
+    the unfiled drafts here at every session start.
+    """
+    common = Path(sh(root, "git", "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+    return common / DRAFTS_DIR
+
+
+def issues_file(spec_dir: Path) -> Path:
+    """The feature's issue drafts: `<git common dir>/pipeline/<slug>/ISSUES.md`.
+
+    A file an older version left in `.runs/<slug>/` is moved here the first time it is looked for
+    (its blocks appended when both exist), so a draft is never in two places.
+    """
+    path = drafts_root(spec_dir.parents[2]) / spec_dir.name / ISSUES_FILE
+    old = runs_of(spec_dir, make=False) / ISSUES_FILE
+    if old.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file():
+            blocks = re.split(r"^(?=## \[[ x~]\] )", old.read_text(), maxsplit=1, flags=re.M)
+            if len(blocks) > 1:
+                path.write_text(path.read_text().rstrip() + "\n\n" + blocks[1].rstrip() + "\n")
+            old.unlink()
+        else:
+            shutil.move(old, path)  # not os.replace: the worktree and the git directory may be on two volumes
+    return path
 
 
 # --- the two mechanical steps -------------------------------------------------------------
@@ -593,7 +631,7 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
         if regate:
             lines.append(f"- Re-gate: your prior findings are the entries under your name in `{prior}` — confirm "
                          f"each BLOCKER and MAJOR is closed or still open. MINOR and NIT are drafted as issues "
-                         f"(`{runs_of(spec_dir) / ISSUES_FILE}`) and out of scope.")
+                         f"(`{issues_file(spec_dir)}`) and out of scope.")
         if name in correctness:
             rules =(f"the product spec it names ({', '.join(f'`{p.relative_to(root)}`' for p in areas)}: business "
                      "rules, surface, copy, screen states, decisions)" if areas else "its `## Decisions`")
@@ -667,7 +705,7 @@ def scenario_blocks(spec_text: str) -> list[dict]:
             continue
         if m := SCENARIO_HEAD_RE.match(line):
             current = {"id": m.group(1), "title": (m.group(2) or "").strip(), "size": None, "issue": None,
-                       "unlinked": False, "acceptance": "", "action": ""}
+                       "unlinked": False, "acceptance": "", "action": "", "folded_into": None}
             out.append(current)
         elif line.startswith("#"):
             current = None
@@ -681,6 +719,8 @@ def scenario_blocks(spec_text: str) -> list[dict]:
                 current["acceptance"] = line.split(":", 1)[1].strip()
             elif line.startswith("Action:"):
                 current["action"] = line.split(":", 1)[1].strip()
+            elif m := FOLDED_LINE_RE.match(line):
+                current["folded_into"] = m.group(1)
     return out
 
 
@@ -986,11 +1026,13 @@ def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
     Each block ends `Found in #N`, N the feature issue, once the spec records one."""
     if (number := feature_issue(spec_dir)) is not None:
         blocks = [b.rstrip() + f"\n\nFound in #{number}" for b in blocks]
-    path = runs_of(spec_dir) / ISSUES_FILE
+    path = issues_file(spec_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
     text = path.read_text().rstrip() if path.is_file() else (
         f"# {slug} — issues to file\n\nDrafted by `{script('pipeline.py')}`. Nothing here is on GitHub until the user "
-        f"says yes and `{script('pipeline.py')} file-issues {slug} --yes` runs. Edit or delete a block before then; a "
-        "fix pass may have closed a finding drafted from an earlier round, so check each first.")
+        f"says yes and `{script('pipeline.py')} file-issues {slug} --yes` runs. A draft the user does not want is "
+        f"removed with `file-issues {slug} --drop \"<title>\"`; a fix pass may have closed a finding drafted from an "
+        "earlier round, so check each first.")
     path.write_text(text + "\n\n" + "\n\n".join(blocks) + "\n")
     return path
 
@@ -999,8 +1041,8 @@ def debt(root: Path, slug: str, title: str, body: str = "", labels: list[str] | 
          scenario: str | None = None) -> int:
     """Draft a debt found while building `slug` and not fixed as an issue in its ISSUES.md.
 
-    Debt goes here the moment it is found, never into STATE.md: `.runs/` is gitignored, so a debt
-    kept only there is lost with the run. The draft reaches GitHub on the user's yes (`file-issues`);
+    Debt goes here the moment it is found, never into STATE.md: the drafts live outside the worktree
+    (`issues_file()`), so they outlive the run and the worktree. The draft reaches GitHub on the user's yes (`file-issues`);
     a later scenario that closes it first deletes the block.
     """
     if not title.strip():
@@ -1015,9 +1057,46 @@ def debt(root: Path, slug: str, title: str, body: str = "", labels: list[str] | 
     return 0
 
 
+def remove_draft(root: Path, slug: str, title: str) -> Path | None:
+    """Remove the open draft titled `title` from the feature's drafts; its path, or None when it has none.
+
+    The drafts live outside the worktree (`issues_file()`), so a draft is removed with a command, never
+    by editing the file. Only an open `## [ ]` block is removed; a filed or claimed one stays.
+    """
+    path = issues_file(spec_folder(root, slug))
+    text = path.read_text() if path.is_file() else ""
+    blocks = re.split(r"^(?=## \[[ x~]\] )", text, flags=re.M)
+    match = [b for b in blocks if b.partition("\n")[0].strip() == f"## [ ] {title.strip()}"]
+    if not match:
+        return None
+    path.write_text("".join(b for b in blocks if b is not match[0]).rstrip() + "\n")
+    return path
+
+
+def close_debt(root: Path, slug: str, title: str, how: str) -> int:
+    """A later scenario paid a drafted debt off before it was filed: remove its draft."""
+    if remove_draft(root, slug, title) is None:
+        print(f"debt --close: no open draft titled `{title.strip()}` for `{slug}`", file=sys.stderr)
+        return 2
+    print(f"closed the drafted debt `{title.strip()}` — paid off by {how}; name it in your `## Handoff`")
+    return 0
+
+
+def drop_drafts(root: Path, slug: str, titles: list[str]) -> int:
+    """The user declined these drafts: remove them, so they are neither filed nor listed again."""
+    missing = [t for t in titles if remove_draft(root, slug, t) is None]
+    for t in titles:
+        if t not in missing:
+            print(f"dropped `{t.strip()}` — it will not be filed")
+    if missing:
+        print("no open draft titled " + ", ".join(f"`{t.strip()}`" for t in missing) + f" for `{slug}` — "
+              f"`file-issues {slug}` lists the titles", file=sys.stderr)
+    return 2 if missing else 0
+
+
 def open_drafts(spec_dir: Path) -> list[dict]:
     """The issue drafts not yet filed: title, labels and body of each `## [ ]` block in ISSUES.md."""
-    return drafts_in(runs_of(spec_dir) / ISSUES_FILE)[0]
+    return drafts_in(issues_file(spec_dir))[0]
 
 
 def drafts_in(path: Path) -> tuple[list[dict], list[str]]:
@@ -1048,7 +1127,7 @@ def issues_path(root: Path, target: str) -> Path:
     """A feature slug's ISSUES.md, or `target` itself when it names an existing `.md` file."""
     if target.endswith(".md") and Path(target).is_file():
         return Path(target).resolve()
-    return runs_of(spec_folder(root, target)) / ISSUES_FILE
+    return issues_file(spec_folder(root, target))
 
 
 def file_issues(root: Path, target: str, yes: bool, pause: float = 0.0) -> int:
@@ -1070,7 +1149,8 @@ def file_issues(root: Path, target: str, yes: bool, pause: float = 0.0) -> int:
         return 1 if pending else 0
     if not yes:
         print(f"{len(drafts)} issue draft(s) in {path} — shown to the user, filed only on their yes "
-              f"with `file-issues {target} --yes`:\n")
+              f"with `file-issues {target} --yes`; one they decline is removed with "
+              f"`file-issues {target} --drop \"<title>\"`:\n")
         print("\n".join(f"- [{', '.join(d['labels'])}] {d['title']}" for d in drafts))
         return 0
     for i, d in enumerate(drafts):
@@ -1202,7 +1282,8 @@ def post_review(root: Path, slug: str, pr: int, round_no: int | None = None, yes
     body = "\n".join([f"Pipeline gate `{unit}` of `{slug}` — {verdict.group(1) if verdict else 'no verdict'}, "
                       f"{counts(found)} BLOCKER/MAJOR/MINOR/NIT. Inline: {len(inline)}.",
                       *(["", "Findings not on a line of this diff:", "", *(f"- {said(f)}" for f in rest)] if rest else []),
-                      "", f"Every MINOR and NIT is also an issue draft in `.runs/{slug}/{ISSUES_FILE}`."])
+                      "", f"Every MINOR and NIT is also an issue draft for `{slug}`, filed on approval "
+                      f"(`pipeline.py file-issues {slug}`)."])
     review = {"event": "COMMENT", "body": body,
               "comments": [{"path": f["file"], "line": f["line"], "side": "RIGHT", "body": said(f)} for f in inline]}
     if not yes:
@@ -1243,6 +1324,21 @@ def set_scenario_issue(path: Path, unit: str, value: str | None) -> None:
         after = next((i for i in block if SIZE_LINE_RE.match(lines[i])),
                      next((i for i in block if lines[i].startswith("Action:")), start))
         lines.insert(after + 1, f"Issue: {value}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def set_folded(path: Path, unit: str, into: str) -> None:
+    """Write `Folded into: <into>` into the scenario's block, after its `Issue:` line (else `Size:`, else its head)."""
+    lines = path.read_text().splitlines()
+    start = next(i for i, l in enumerate(lines) if (m := SCENARIO_HEAD_RE.match(l)) and m.group(1) == unit)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+    block = range(start + 1, end)
+    if (at := next((i for i in block if FOLDED_LINE_RE.match(lines[i])), None)) is not None:
+        lines[at] = f"Folded into: {into}"
+    else:
+        after = next((i for i in block if ISSUE_LINE_RE.match(lines[i])),
+                     next((i for i in block if SIZE_LINE_RE.match(lines[i])), start))
+        lines.insert(after + 1, f"Folded into: {into}")
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -1746,24 +1842,42 @@ def load_state(spec_dir: Path) -> dict:
         raise Refuse(f"{', '.join(unopened)} {'has' if len(unopened) == 1 else 'have'} no sub-issue — the approved "
                      f"spec's issues are opened before the build: `{script('pipeline.py')} open-issues {spec_dir.name}` "
                      "lists them, and `--yes` (on the user's approval of the spec) creates them")
-    if fresh and any(ticked for _, ticked in listed):
+    if fresh:
         # A scenario is built when its acceptance test is written AND its sub-issue is closed: a written
-        # line alone is a run that was cut off before the pipeline recorded the scenario done. A state
-        # that cannot be read is not taken as open: that would build a finished scenario again.
+        # line alone is a run that was cut off before the pipeline recorded the scenario done (or its PR has
+        # not merged yet), and is finished again. A state that cannot be read is not taken as open: that
+        # would build a finished scenario again. A sub-issue closed on a scenario with no written line is
+        # the one state the pipeline never leaves: neither side is trusted, and the user decides.
         issue_of = {b["id"]: b["issue"] for b in scenario_blocks(text)}
         wanted = [issue_of[u] for u, ticked in listed if ticked]
-        states = ISSUE_STATES(spec_dir.parents[2], wanted)
+        states = ISSUE_STATES(spec_dir.parents[2], wanted) if wanted else {}
         if unread := [n for n in wanted if n not in states]:
             raise Refuse(f"could not read the state of {', '.join(f'#{n}' for n in unread)} from GitHub, so which "
                          "written scenarios are built is unknown — check `gh auth status` and the network, then "
                          "call `next` again")
+        # The unwritten scenarios' issues are read only to catch that state: a start GitHub cannot answer
+        # for them goes ahead as it always has, building them.
+        if rest := [issue_of[u] for u, ticked in listed if not ticked and isinstance(issue_of.get(u), int)]:
+            with contextlib.suppress(Refuse):
+                states |= ISSUE_STATES(spec_dir.parents[2], rest)
+        folded = {b["id"]: b["folded_into"] for b in scenario_blocks(text) if b["folded_into"]}
+        if odd := [u for u, ticked in listed
+                   if not ticked and u not in folded and states.get(issue_of.get(u)) == "CLOSED"]:
+            raise Refuse("the specification and GitHub disagree on what is built:\n"
+                         + "\n".join(f"- {u}: #{issue_of[u]} is CLOSED, but the spec has no `Acceptance test:` line "
+                                     "for it (none, or one that is not just the test file and name)" for u in odd)
+                         + "\nAsk the user which is right, and do not pick for them. Built (it was merged without "
+                         "the line): write the scenario's `Acceptance test:` line. Not built (closed by mistake, or "
+                         f"by an unrelated PR): reopen the issue (`gh issue reopen N`). Then call `next` again")
         listed = [(u, ticked and states.get(issue_of[u]) == "CLOSED") for u, ticked in listed]
     state = {"scenarios": {}, "rounds": [], "pending": None, "final": None, "retro": False,
              "base": "HEAD", "exclude": []} if fresh else json.loads(path.read_text())
     for unit, ticked in listed:
         if unit not in state["scenarios"]:
             state["scenarios"][unit] = {
-                "size": "small" if is_small(text, unit) else "large", "folded_into": None, "plan_ok": False,
+                "size": "small" if is_small(text, unit) else "large",
+                "folded_into": next((b["folded_into"] for b in scenario_blocks(text) if b["id"] == unit), None),
+                "plan_ok": False,
                 "pre": None, "runs": 0, "report": "", "mutation": "", "checkpoint": None, "fix_done": False,
                 # A scenario already ticked when the cursor is first created was built before it existed.
                 "done": fresh and ticked,
@@ -2110,6 +2224,9 @@ def brief_head(spec_dir: Path, title: str) -> list[str]:
         lines.append(f"- Inherited context: `{runs_of(spec_dir) / 'STATE.md'}` — not the earlier plans.")
     if excluded := excluded_line(spec_dir):
         lines.append(f"- {excluded}")
+    # Spelled out whole: an unattended run may call this one pipeline command, matched on its text.
+    lines.append(f"- Found something you will not fix: `{script('pipeline.py')} debt {spec_dir.name} \"<title>\" "
+                 "--body \"<what is owed and why>\"` — run it exactly so, from the repo root; never edit the drafts file.")
     return lines
 
 
@@ -2443,7 +2560,7 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
             if not getattr(args, "accept_open", False):
                 raise Refuse(f"{unit} is FAIL after the gate's one fix pass, and there is no third round "
                              f"(`{here('briefs/orchestration.md')}` → *Judgement calls* → *One fix pass*). What it leaves open is drafted in "
-                             f"`{runs_of(spec_dir) / ISSUES_FILE}`. Take it to the user: they fix it outside the pipeline, or "
+                             f"`{issues_file(spec_dir)}`. Take it to the user: they fix it outside the pipeline, or "
                              "accept it open with `next --accept-open`, which goes on to scoring and the retro")
             last["verdict"] = "FAIL, ACCEPTED OPEN"
             print(f"note: {unit} accepted open by the user — its BLOCKER/MAJOR findings stay drafted as issues\n")
@@ -2534,7 +2651,7 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
           + (" and the feature issue" if feature_issue(spec_dir) is not None else "") + " when the PR merges.")
     ACTION["pr_body"] = str(draft)
     if drafts := open_drafts(spec_dir):
-        print(f"\nShow the user the {len(drafts)} issue draft(s) in `{runs_of(spec_dir) / ISSUES_FILE}` "
+        print(f"\nShow the user the {len(drafts)} issue draft(s) in `{issues_file(spec_dir)}` "
               f"(`{script('pipeline.py')} file-issues {slug}` lists them). On their yes: `file-issues {slug} --yes`.")
         ACTION["issues"] = len(drafts)
     if touched := state.get("sensitive"):
@@ -2594,6 +2711,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--small", action="store_true", help="a small scenario (no architect plan)")
     fi = sub.add_parser("file-issues", help="list a feature's (or an issues file's) drafts; with --yes, create them on GitHub")
     fi.add_argument("slug", help="feature slug, or a path to an issues file in the same `## [ ]` format")
+    fi.add_argument("--drop", action="append", metavar="TITLE", help="the user declined this draft: remove it "
+                    "(repeatable); nothing is filed")
     fi.add_argument("--pause", type=float, default=0.0, metavar="SECONDS", help="wait between issues (bulk filing)")
     fi.add_argument("--yes", action="store_true", help="the user said yes: run `gh issue create` for each open draft")
     pr = sub.add_parser("post-review", help="a gate round's findings as one PR review; with --yes, post it")
@@ -2615,6 +2734,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--body", default="", help="the drafted issue's body: what is owed and why it was left")
     d.add_argument("--label", action="append", help="a label (repeatable; default debt)")
     d.add_argument("--scenario", metavar="SCENARIO-NN", help="the scenario it was found in")
+    d.add_argument("--close", metavar="HOW", help="this build paid the drafted debt `title` off: remove its open "
+                   "draft, saying how (the test name or file:line)")
     b = sub.add_parser("batch", help="the Direct lane: a mechanical migration as a checklist, one unit per package")
     b.add_argument("slug")
     src = b.add_mutually_exclusive_group()
@@ -2692,6 +2813,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
         checkpoint(root, args.slug, args.unit, args.pre, args.small, args.exclude)
         return 0
     if args.cmd == "file-issues":
+        if args.drop:
+            return drop_drafts(root, args.slug, args.drop)
         return file_issues(root, args.slug, args.yes, args.pause)
     if args.cmd == "post-review":
         return post_review(root, args.slug, args.pr, args.round, args.yes)
@@ -2712,6 +2835,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             units = [l.strip() for l in src.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
         return batch(root, args.slug, units, args.done, args.tests, args.found, args.body, args.label)
     if args.cmd == "debt":
+        if args.close:
+            return close_debt(root, args.slug, args.title, args.close)
         return debt(root, args.slug, args.title, args.body, args.label, args.scenario)
     if args.cmd == "gate":
         return 0 if gate(root, args.slug, args.round, args.base, args.pre_fix, args.only, args.exclude) else 2
@@ -2735,6 +2860,7 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             if args.unit not in state["scenarios"] or args.into not in state["scenarios"]:
                 raise Refuse(f"{args.unit} and {args.into} must both be scenarios of the specification")
             state["scenarios"][args.unit]["folded_into"] = args.into
+            set_folded(spec_file(spec_dir), args.unit, args.into)
             save_state(spec_dir, state)
             print(f"{args.unit} is delivered by {args.into}: it gets no plan, run or checkpoint of its own")
             return 0

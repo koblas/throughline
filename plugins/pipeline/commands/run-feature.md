@@ -82,8 +82,11 @@ to follow.
 ## Limits
 
 - Never resume with a larger `--feature-budget` or `--accept-open` unless the user gave that flag.
-- A feature that finished leaves issue drafts in `.runs/<slug>/ISSUES.md`: list them with
+- A feature that finished may leave issue drafts (kept in the git common directory, outside the
+  worktree): list them with
   `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py file-issues <slug>` and file them only on the user's yes (`--yes`).
+  A repo whose `.claude/pipeline.json` sets `"runner": {"file_issues": true}` has given that yes for
+  every unattended run: the runner files them itself at DONE and its last lines name each issue.
 - Two resumes without asking per feature **in total**, whatever their kind (exit 6 retry, 8,
   9); after that every stop goes to the user.
 - The runner never commits, pushes or opens a pull request, and neither do you from here.

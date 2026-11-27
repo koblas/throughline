@@ -181,11 +181,22 @@ def load_profile(path: Path) -> dict:
     return profile if isinstance(profile, dict) else {}
 
 
+def debt_tools() -> list[str]:
+    """The one pipeline command every headless run may call on its own: drafting a debt it found
+    (`pipeline.py debt`), by the absolute path every brief spells out (`pipeline.brief_head`), run as
+    the script or through `python3`. The draft goes to the git common directory
+    (`pipeline.drafts_root()`), which `run_profile` opens for writing."""
+    path = cfg.script("pipeline.py")
+    return [f"Bash({path} debt *)", f"Bash(python3 {path} debt *)"]
+
+
 def tool_lists(root: Path) -> tuple[list[str], list[str]]:
     """The profile's tool lists: pre-approved for every headless run (an agent's own `tools:` list still
-    limits what it has), and denied to every run (an unattended run never publishes anything)."""
+    limits what it has), and denied to every run (an unattended run never publishes anything). Every
+    run may also draft a debt (`debt_tools()`), so found work is never lost for want of a permission."""
     perms = load_profile(profile_path(root)).get("permissions") or {}
-    return list(perms.get("allow") or []), list(perms.get("deny") or [])
+    allowed = list(perms.get("allow") or [])
+    return allowed + [t for t in debt_tools() if t not in allowed], list(perms.get("deny") or [])
 
 
 def runner_settings(root: Path) -> dict:
@@ -205,6 +216,7 @@ def runner_only_env(root: Path) -> tuple[str, ...]:
 JUDGE_DENIED = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Agent"]
 READ_ONLY = ["Read", "Glob", "Grep"]
 RUNS_FILE = "RUNS.jsonl"
+FILE_PAUSE = 1.0  # seconds between the issues the runner files at DONE: GitHub limits content creation
 MAX_STEPS = 400
 # A blocking finding a reviewer wrote in a shape `pipeline.findings` does not read (a numbered list, a heading).
 RAW_BLOCKING_RE = re.compile(r"^[\s*\-\d.)#]*\**\[(?:BLOCKER|MAJOR)\b")
@@ -469,8 +481,12 @@ def run_profile(root: Path, work: Path, profile: dict | None = None) -> Path:
     fs["allowRead"] = ([here if p == "." else p for p in fs.get("allowRead", [])] + [git("--git-common-dir")]
                        + [str(cfg.PLUGIN_ROOT)])  # its briefs and scripts: a plugin cache sits under `~/`
     temp = str(Path(tempfile.gettempdir()).resolve())
+    # The issue drafts (`pipeline.drafts_root()`) sit in the common git directory so they outlive the
+    # worktree: a run drafting a debt must be able to write there, and only there in that directory.
+    drafts = pipeline.drafts_root(root)
+    drafts.mkdir(parents=True, exist_ok=True)
     fs["allowWrite"] = ([here if p == "." else p for p in fs.get("allowWrite", [])]
-                        + [git("--git-dir"), *sorted({temp, tempfile.gettempdir()})])
+                        + [git("--git-dir"), str(drafts), *sorted({temp, tempfile.gettempdir()})])
     # No run may loosen the policy of the runs after it: the per-run copy, every settings file and the plugin's
     # hooks (the acceptance-test lock lives there) are read-only to the sandbox and to Edit / Write.
     guarded = [str(work.resolve()), *(str(root.resolve() / ".claude" / n) for n in SETTINGS_FILES),
@@ -618,6 +634,28 @@ class Runner:
     def count_stop(self, stop: Stop) -> None:
         """One line in RUNS.jsonl per time the runner needed a person: the evaluation's `stops` metric."""
         self.log("", "runner-stop", "", {"result": f"{stop.code}: {str(stop)[:300]}"})
+
+    def file_drafts(self) -> None:
+        """At DONE, the feature's open issue drafts: filed here when the repo's config says so
+        (`runner.file_issues: true` in .claude/pipeline.json — that setting is the user's yes for every
+        unattended run in the repo), else named for a person to file. The runner runs `gh issue create`
+        itself, through `pipeline.py file-issues`; its agents still may not run `gh`. A failure is said
+        and leaves the rest drafted: the feature is done either way."""
+        drafts = pipeline.open_drafts(self.spec_dir)
+        if not drafts:
+            return
+        if not runner_settings(self.root).get("file_issues"):
+            self.say(f"{len(drafts)} issue draft(s) wait for a person: `{cfg.script('pipeline.py')} file-issues "
+                     f"{self.slug}` lists them (set `runner.file_issues` in .claude/pipeline.json to file them here)")
+            return
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = pipeline.file_issues(self.root, self.slug, True, FILE_PAUSE)
+        for line in out.getvalue().splitlines():
+            self.say(f"  {line}")
+        if code != 0:
+            self.say(f"filing stopped part-way; the rest stay drafted: `{cfg.script('pipeline.py')} file-issues "
+                     f"{self.slug}`")
 
     def finish(self, state: str, stop: Stop | None = None, cut_off: bool = False) -> None:
         self.note(state=state, spent=self.spent(), runs=len(self.runs()),
@@ -1059,6 +1097,7 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
                 self.say(f"done — ${self.spent():.2f} in {len(self.runs())} runs")
                 if draft := action.get("pr_body"):
                     self.say(f"PR body: {draft} — its `Closes #N` lines close the sub-issues when the PR merges")
+                self.file_drafts()
                 if touched := action.get("sensitive"):
                     self.say(f"this feature changed {len(touched)} security-sensitive path(s); `/security-hunt` "
                              "was not run — it is yours to run:\n  " + "\n  ".join(touched))

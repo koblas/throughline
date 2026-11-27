@@ -9,7 +9,7 @@ For the `developer` in fix mode and the orchestrator writing a fix-pass brief. R
 
 A fix pass applies BLOCKER and MAJOR findings, and only those. **No MINOR or NIT is folded
 in**, not even one in a file a blocking fix already edits: every MINOR and NIT is an issue
-draft in `.runs/<slug>/ISSUES.md` (the gate drafts them itself), filed on the user's yes.
+draft for the feature (the gate drafts them itself; `pipeline.py file-issues <slug>` lists them), filed on the user's yes.
 Anything else the fix turns up and leaves becomes a draft too
 (`scripts/pipeline.py debt <slug> "<title>"`). **Moving a check
 from one function to another is a behaviour change** for every caller that ran it: each

@@ -4,6 +4,8 @@ Run: python3 -m unittest discover -s plugins/pipeline/tests
 """
 
 import argparse
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -183,6 +185,60 @@ class RunnerTest(tp.Feature):
 
         self.assertTrue(any(f"PR body: {self.run_dir / 'PR.md'}" in line for line in self.said), self.said)
 
+    def drafted(self, file_issues=None):
+        """One debt drafted before DONE, and the repo's `runner.file_issues` set as given."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.debt(self.root, "demo", "Retry the webhook on a 502")
+        if file_issues is not None:
+            path = self.root / ".claude" / "pipeline.json"
+            config = json.loads(path.read_text())
+            config["runner"]["file_issues"] = file_issues
+            path.write_text(json.dumps(config))
+        created, real = [], pl.subprocess.run
+
+        def gh(cmd, *a, **kw):
+            if list(cmd[:3]) == ["gh", "issue", "create"]:
+                created.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, "https://github.com/o/r/issues/77\n", "")
+            return real(cmd, *a, **kw)
+        pl.subprocess.run = gh
+        self.addCleanup(setattr, pl.subprocess, "run", real)
+        return created
+
+    def test_with_file_issues_set_the_runner_files_the_drafts_at_done(self):
+        created = self.drafted(file_issues=True)
+
+        self.assertEqual(self.runner().run(), 0)
+
+        self.assertEqual([c[4] for c in created], ["Retry the webhook on a 502"])
+        self.assertEqual(pl.open_drafts(self.spec_dir), [])
+        self.assertTrue(any("filed https://github.com/o/r/issues/77" in line for line in self.said), self.said)
+
+    def test_without_file_issues_the_drafts_wait_for_a_person(self):
+        created = self.drafted()
+
+        self.assertEqual(self.runner().run(), 0)
+
+        self.assertEqual(created, [])
+        self.assertEqual(len(pl.open_drafts(self.spec_dir)), 1)
+        self.assertTrue(any("1 issue draft(s) wait for a person" in line for line in self.said), self.said)
+
+    def test_the_debt_command_a_brief_spells_out_is_one_every_run_may_call(self):
+        self.go()
+
+        build = next(c for c in self.calls if "run: build" in c["prompt"])
+        brief = Path(re.search(r"Brief: (\S+)", build["prompt"]).group(1)).read_text()
+        command = re.search(r"`(\S+/pipeline\.py debt demo [^`]+)`", brief).group(1)
+        allowed, _ = rn.tool_lists(self.root)
+        prefixes = [t[len("Bash("):-len(" *)")] for t in allowed if t.startswith("Bash(") and t.endswith(" *)")]
+        self.assertTrue(any(command.startswith(p + " ") for p in prefixes), (command, rn.debt_tools()))
+
+    def test_a_file_issues_setting_that_is_not_a_boolean_is_refused(self):
+        self.drafted(file_issues="yes")
+
+        with self.assertRaises(rn.cfg.ConfigError):
+            rn.cfg.load(self.root)
+
     def test_starts_with_no_preflight_run_and_accepts_the_old_flags_as_no_ops(self):
         code, _ = self.go(no_preflight=False, no_docker=True)
 
@@ -210,7 +266,7 @@ class RunnerTest(tp.Feature):
         profile = json.loads(rn.profile_path(self.root).read_text())["permissions"]
         allowed, denied = rn.tool_lists(self.root)
 
-        self.assertEqual((allowed, denied), (profile["allow"], profile["deny"]))
+        self.assertEqual((allowed, denied), (profile["allow"] + rn.debt_tools(), profile["deny"]))
         self.assertIn("Bash(go *)", allowed)
         r = self.runner()
         r.run()
@@ -228,6 +284,8 @@ class RunnerTest(tp.Feature):
         self.assertIn(git("--git-common-dir"), fs["allowRead"])
         self.assertIn(str(rn.cfg.PLUGIN_ROOT), fs["allowRead"])  # an installed plugin sits under `~/`
         self.assertIn(git("--git-dir"), fs["allowWrite"])
+        # The issue drafts, in the common git directory so they outlive a linked worktree: writable.
+        self.assertIn(git("--git-common-dir") + "/pipeline", fs["allowWrite"])
         self.assertIn(str(Path(rn.tempfile.gettempdir()).resolve()), fs["allowWrite"])
         self.assertIn(str(self.root.resolve()), fs["allowWrite"])  # `.` spelled out
         self.assertNotIn(".", fs["allowWrite"] + fs["allowRead"])
@@ -368,7 +426,7 @@ class RunnerTest(tp.Feature):
         self.assertEqual(code, 2)
         self.assertIn("no third round", why)
         self.assertEqual(sum(1 for c in self.calls if "run: gate-fix" in c["prompt"]), 1)
-        self.assertIn("heph run //go:test-all", (self.run_dir / "ISSUES.md").read_text())
+        self.assertIn("heph run //go:test-all", pl.issues_file(self.spec_dir).read_text())
 
     def test_a_race_that_failed_is_run_again_even_when_the_fix_touched_no_go_production(self):
         self.race_code = 1

@@ -224,6 +224,48 @@ class NextTest(Feature):
         self.assertEqual(code, 2)
         self.assertIn("REFUSED", out)
 
+    def test_a_closed_sub_issue_on_a_scenario_the_spec_says_is_unbuilt_stops_for_the_user(self):
+        self.states[ISSUE["SCENARIO-01"]] = "CLOSED"  # closed on GitHub, but no `Acceptance test:` line
+
+        code, out = self.next()
+
+        self.assertEqual(code, 2)
+        self.assertIn("REFUSED", out)
+        self.assertIn(f"SCENARIO-01: #{ISSUE['SCENARIO-01']} is CLOSED", out)
+        self.assertIn("no `Acceptance test:` line", out)
+        self.assertIn("Ask the user", out)
+        self.assertFalse((pl.runs_of(self.spec_dir) / "PIPELINE.json").exists())  # nothing decided for them
+
+    def test_a_fold_is_written_into_the_spec_and_leaves_its_approval_standing(self):
+        before = pl.spec_check().scenario_digest(self.spec.read_text())
+        self.next()
+
+        self.run_cli("fold", "demo", "SCENARIO-01", "SCENARIO-02")
+
+        block = next(b for b in pl.scenario_blocks(self.spec.read_text()) if b["id"] == "SCENARIO-01")
+        self.assertEqual(block["folded_into"], "SCENARIO-02")
+        self.assertEqual(pl.spec_check().scenario_digest(self.spec.read_text()), before)
+
+    def test_a_folded_scenario_whose_issue_its_absorbers_pr_closed_is_not_a_disagreement(self):
+        self.next()
+        self.run_cli("fold", "demo", "SCENARIO-01", "SCENARIO-02")
+        self.tick("SCENARIO-02")
+        self.states[ISSUE["SCENARIO-01"]] = "CLOSED"  # `Closes #N` on the absorber's PR; no line of its own
+        (pl.runs_of(self.spec_dir) / "PIPELINE.json").unlink()  # a fresh cursor: a new worktree
+
+        _, out = self.next()
+
+        self.assertNotIn("disagree", out)
+        self.assertEqual(self.state()["scenarios"]["SCENARIO-01"]["folded_into"], "SCENARIO-02")
+
+    def test_a_written_scenario_whose_sub_issue_is_still_open_is_finished_again_not_stopped(self):
+        self.tick("SCENARIO-01")
+        self.states[ISSUE["SCENARIO-01"]] = "OPEN"  # its PR has not merged: the normal state mid-feature
+
+        code, out = self.next()
+
+        self.assertNotIn("REFUSED", out)
+
     def spawned(self):
         """Every command `next` runs through `subprocess.run`, as it ran them."""
         calls, run = [], pl.subprocess.run
@@ -1835,15 +1877,18 @@ class FileIssuesTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, self.root)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)  # the drafts live in its git dir
         self.spec_dir = pl.spec_folder(self.root, "demo")
         found = [{"sev": sev, "file": "", "line": 0, "reviewers": ["test-reviewer"], "text": [f"[{sev}] go/a.go:{n} — gap {n}"]}
                  for n, sev in ((1, "MINOR"), (2, "NIT"))]
         pl.draft_issues(self.spec_dir, "demo", found, "REVIEW-01")
 
     def file(self, yes, results):
-        calls = []
+        calls, real = [], pl.subprocess.run
 
-        def fake(cmd, **_):
+        def fake(cmd, **kw):
+            if cmd[0] == "git":  # finding the drafts: not part of what is filed
+                return real(cmd, **kw)
             calls.append(cmd)
             return results.pop(0)
         out = io.StringIO()
@@ -1867,7 +1912,7 @@ class FileIssuesTest(unittest.TestCase):
         self.assertEqual(calls[0][:5], ["gh", "issue", "create", "--title", "go/a.go:1 — gap 1"])
         self.assertEqual(calls[0][-2:], ["--label", "debt"])
         self.assertEqual(pl.open_drafts(self.spec_dir), [])
-        self.assertIn("## [x] go/a.go:2 — gap 2 — https://github.com/o/r/issues/8", (pl.runs_of(self.spec_dir) / pl.ISSUES_FILE).read_text())
+        self.assertIn("## [x] go/a.go:2 — gap 2 — https://github.com/o/r/issues/8", pl.issues_file(self.spec_dir).read_text())
 
     def test_a_failure_part_way_leaves_the_filed_one_marked_and_the_rest_open(self):
         results = [subprocess.CompletedProcess([], 0, "https://github.com/o/r/issues/7\n", ""),

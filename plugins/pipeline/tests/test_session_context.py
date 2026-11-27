@@ -70,6 +70,46 @@ class SessionContextTest(unittest.TestCase):
         self.assertEqual("", out.stdout)
         self.assertIn("the pipeline workflow rules were not loaded", out.stderr)
 
+    def drafts(self, slug: str, text: str) -> Path:
+        path = self.tmp / ".git" / "pipeline" / slug / "ISSUES.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+        return path
+
+    def test_unfiled_issue_drafts_are_listed_by_feature(self):
+        self.configure()
+        self.drafts("invites", "# invites\n\n## [ ] Retry on a 502\n\n## [ ] Drop the helper\n\n"
+                               "## [x] Filed — https://github.com/o/r/issues/1\n")
+        self.drafts("billing", "# billing\n\n## [~] Maybe filed\n")
+        self.drafts("done", "# done\n\n## [x] Filed — https://github.com/o/r/issues/2\n")
+
+        out = run(self.tmp)
+
+        self.assertEqual(0, out.returncode)
+        self.assertIn("## Unfiled issue drafts", out.stdout)
+        self.assertIn("- `invites`: 2 to file —", out.stdout)
+        self.assertIn("- `billing`: 0 to file, 1 marked `[~]`", out.stdout)
+        self.assertNotIn("`done`", out.stdout)
+        self.assertIn("file-issues <slug>", out.stdout)
+
+    def test_a_single_session_repo_is_told_about_unfiled_drafts_too(self):
+        (self.tmp / ".claude").mkdir()
+        (self.tmp / ".claude" / "pipeline.json").write_text('{"mode": "single-session"}')
+        self.drafts("invites", "## [ ] Retry on a 502\n")
+
+        self.assertIn("- `invites`: 1 to file", run(self.tmp).stdout)
+
+    def test_no_drafts_means_no_note(self):
+        self.configure()
+        self.drafts("done", "## [x] Filed — https://github.com/o/r/issues/2\n")
+
+        self.assertNotIn("Unfiled issue drafts", run(self.tmp).stdout)
+
+    def test_a_repo_without_the_config_is_not_told_about_drafts(self):
+        self.drafts("invites", "## [ ] Retry on a 502\n")
+
+        self.assertNotIn("Unfiled issue drafts", run(self.tmp).stdout)
+
     def test_the_session_start_hook_runs_it(self):
         hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["SessionStart"]
         commands = [h["command"] for group in hooks for h in group["hooks"]]
