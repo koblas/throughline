@@ -44,8 +44,14 @@ You need:
 Run everything CI runs, from the repo root:
 
 ```bash
-python3 -m unittest discover -s plugins/pipeline/tests
+python3 plugins/pipeline/tests/run.py
 ```
+
+That runs the suite spread over one worker process per CPU (`-j N` to change it, `-v` for every
+shard's output). Plain `python3 -m unittest discover -s plugins/pipeline/tests` still works, one
+test at a time; use it, or `python3 -m unittest test_pipeline.NextTest` from `plugins/pipeline/tests`,
+for a single module or class. No test may use `setUpClass` or `setUpModule`: the runner puts tests
+of one class in different processes.
 
 ```bash
 ruff check .

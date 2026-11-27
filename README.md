@@ -92,7 +92,7 @@ new release:
 Requires Python 3.12+. Run the tests from the repo root:
 
 ```
-python3 -m unittest discover -s plugins/pipeline/tests
+python3 plugins/pipeline/tests/run.py
 ```
 
 Many tests drive `go`, `npx`, `git` and `ps` in scratch repos and need those on `PATH`. CI runs the

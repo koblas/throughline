@@ -218,6 +218,13 @@ def repo_root() -> Path:
     return Path(sh(Path.cwd(), "git", "rev-parse", "--show-toplevel").strip())
 
 
+def mutation_journal(root: Path) -> Path:
+    """Where `mutation-sample.py` journals a file it mutates in place (its `journal()`): the git directory
+    of this worktree. The file exists only while a frontend mutant is on disk, or after a run died mid-mutant."""
+    path = Path(sh(root, "git", "rev-parse", "--git-path", "mutation-sample.journal.json").strip())
+    return path if path.is_absolute() else root / path
+
+
 def snap(root: Path) -> str:
     """Tree id of the working tree without touching the real index or committing."""
     index = Path(sh(root, "git", "rev-parse", "--git-path", "index").strip())
@@ -2748,7 +2755,10 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             print(f"{args.unit}: its acceptance test may be edited for the rest of this scenario")
             return 0
         # A frontend mutation run killed mid-mutant leaves the mutated line on disk: put it back first.
-        repaired = subprocess.run([str(HERE / "mutation-sample.py"), "--repair"], cwd=root, capture_output=True, text=True)
+        # Only a run that wrote a journal can have left one, so without the journal there is nothing to do.
+        repaired = (subprocess.run([str(HERE / "mutation-sample.py"), "--repair"], cwd=root, capture_output=True,
+                                   text=True) if mutation_journal(root).is_file()
+                    else subprocess.CompletedProcess([], 0, "", ""))
         if repaired.stdout.strip():
             print(repaired.stdout.strip() + "\n")
         if repaired.returncode != 0:
