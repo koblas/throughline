@@ -181,11 +181,20 @@ def load_profile(path: Path) -> dict:
     return profile if isinstance(profile, dict) else {}
 
 
+def debt_tool() -> str:
+    """The one pipeline command every headless run may call on its own: drafting a debt it found
+    (`pipeline.py debt`), by the absolute path its brief names. The draft goes to the git common
+    directory (`pipeline.drafts_root()`), which `run_profile` opens for writing."""
+    return f"Bash({cfg.script('pipeline.py')} debt *)"
+
+
 def tool_lists(root: Path) -> tuple[list[str], list[str]]:
     """The profile's tool lists: pre-approved for every headless run (an agent's own `tools:` list still
-    limits what it has), and denied to every run (an unattended run never publishes anything)."""
+    limits what it has), and denied to every run (an unattended run never publishes anything). Every
+    run may also draft a debt (`debt_tool()`), so found work is never lost for want of a permission."""
     perms = load_profile(profile_path(root)).get("permissions") or {}
-    return list(perms.get("allow") or []), list(perms.get("deny") or [])
+    allowed = list(perms.get("allow") or [])
+    return allowed + ([debt_tool()] if debt_tool() not in allowed else []), list(perms.get("deny") or [])
 
 
 def runner_settings(root: Path) -> dict:
@@ -469,8 +478,12 @@ def run_profile(root: Path, work: Path, profile: dict | None = None) -> Path:
     fs["allowRead"] = ([here if p == "." else p for p in fs.get("allowRead", [])] + [git("--git-common-dir")]
                        + [str(cfg.PLUGIN_ROOT)])  # its briefs and scripts: a plugin cache sits under `~/`
     temp = str(Path(tempfile.gettempdir()).resolve())
+    # The issue drafts (`pipeline.drafts_root()`) sit in the common git directory so they outlive the
+    # worktree: a run drafting a debt must be able to write there, and only there in that directory.
+    drafts = pipeline.drafts_root(root)
+    drafts.mkdir(parents=True, exist_ok=True)
     fs["allowWrite"] = ([here if p == "." else p for p in fs.get("allowWrite", [])]
-                        + [git("--git-dir"), *sorted({temp, tempfile.gettempdir()})])
+                        + [git("--git-dir"), str(drafts), *sorted({temp, tempfile.gettempdir()})])
     # No run may loosen the policy of the runs after it: the per-run copy, every settings file and the plugin's
     # hooks (the acceptance-test lock lives there) are read-only to the sandbox and to Edit / Write.
     guarded = [str(work.resolve()), *(str(root.resolve() / ".claude" / n) for n in SETTINGS_FILES),

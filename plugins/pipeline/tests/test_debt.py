@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -19,7 +20,8 @@ class DebtTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         (self.root / "docs" / "specs").mkdir(parents=True)
-        self.issues = self.root / ".runs" / "invites" / "ISSUES.md"
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.issues = pl.issues_file(pl.spec_folder(self.root, "invites"))
 
     def tearDown(self):
         self.tmp.cleanup()

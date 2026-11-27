@@ -210,7 +210,7 @@ class RunnerTest(tp.Feature):
         profile = json.loads(rn.profile_path(self.root).read_text())["permissions"]
         allowed, denied = rn.tool_lists(self.root)
 
-        self.assertEqual((allowed, denied), (profile["allow"], profile["deny"]))
+        self.assertEqual((allowed, denied), (profile["allow"] + [rn.debt_tool()], profile["deny"]))
         self.assertIn("Bash(go *)", allowed)
         r = self.runner()
         r.run()
@@ -228,6 +228,8 @@ class RunnerTest(tp.Feature):
         self.assertIn(git("--git-common-dir"), fs["allowRead"])
         self.assertIn(str(rn.cfg.PLUGIN_ROOT), fs["allowRead"])  # an installed plugin sits under `~/`
         self.assertIn(git("--git-dir"), fs["allowWrite"])
+        # The issue drafts, in the common git directory so they outlive a linked worktree: writable.
+        self.assertIn(git("--git-common-dir") + "/pipeline", fs["allowWrite"])
         self.assertIn(str(Path(rn.tempfile.gettempdir()).resolve()), fs["allowWrite"])
         self.assertIn(str(self.root.resolve()), fs["allowWrite"])  # `.` spelled out
         self.assertNotIn(".", fs["allowWrite"] + fs["allowRead"])
@@ -368,7 +370,7 @@ class RunnerTest(tp.Feature):
         self.assertEqual(code, 2)
         self.assertIn("no third round", why)
         self.assertEqual(sum(1 for c in self.calls if "run: gate-fix" in c["prompt"]), 1)
-        self.assertIn("heph run //go:test-all", (self.run_dir / "ISSUES.md").read_text())
+        self.assertIn("heph run //go:test-all", pl.issues_file(self.spec_dir).read_text())
 
     def test_a_race_that_failed_is_run_again_even_when_the_fix_touched_no_go_production(self):
         self.race_code = 1

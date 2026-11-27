@@ -186,7 +186,7 @@ It runs as a batch, one unit per package:
    only with the command that showed it green — and prints the next.
 4. Anything found and not fixed becomes an issue draft at once:
    `scripts/pipeline.py batch <slug> --found "<title>" [--body …] [--label …]` (into
-   `.runs/<slug>/ISSUES.md`, filed with `file-issues <slug> --yes` on the user's yes).
+   the feature's issue drafts, filed with `file-issues <slug> --yes` on the user's yes).
 5. `all … done` (exit 3) → run the full gates once, then open one pull request.
 
 ## Rules
@@ -198,8 +198,9 @@ It runs as a batch, one unit per package:
 - **Inherited context is `STATE.md`**, rewritten by `developer` at the end of each scenario.
 - **PASS WITH FOLLOW-UPS is done.** Only BLOCKER and MAJOR block; no fix pass follows it.
 - **A fix pass exists for BLOCKER and MAJOR, and applies nothing else** (`briefs/fix-pass.md`
-  → *Fix passes*). Every MINOR/NIT is an issue draft in `.runs/<slug>/ISSUES.md`, which
-  reaches GitHub only on the user's yes.
+  → *Fix passes*). Every MINOR/NIT is an issue draft for the feature, which reaches GitHub
+  only on the user's yes. The drafts live outside the worktree, in the git common directory
+  (`<git-common-dir>/pipeline/<slug>/ISSUES.md`), so they outlive it; session start lists unfiled ones.
 - **A user exclusion travels verbatim.** The script copies the spec's `**Excluded paths**`
   line into every brief; a prompt you write yourself repeats it word for word.
 - **A prompt you write yourself** starts with a `pipeline.py tag` line, cites brief files

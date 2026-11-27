@@ -1835,15 +1835,18 @@ class FileIssuesTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, self.root)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)  # the drafts live in its git dir
         self.spec_dir = pl.spec_folder(self.root, "demo")
         found = [{"sev": sev, "file": "", "line": 0, "reviewers": ["test-reviewer"], "text": [f"[{sev}] go/a.go:{n} — gap {n}"]}
                  for n, sev in ((1, "MINOR"), (2, "NIT"))]
         pl.draft_issues(self.spec_dir, "demo", found, "REVIEW-01")
 
     def file(self, yes, results):
-        calls = []
+        calls, real = [], pl.subprocess.run
 
-        def fake(cmd, **_):
+        def fake(cmd, **kw):
+            if cmd[0] == "git":  # finding the drafts: not part of what is filed
+                return real(cmd, **kw)
             calls.append(cmd)
             return results.pop(0)
         out = io.StringIO()
@@ -1867,7 +1870,7 @@ class FileIssuesTest(unittest.TestCase):
         self.assertEqual(calls[0][:5], ["gh", "issue", "create", "--title", "go/a.go:1 — gap 1"])
         self.assertEqual(calls[0][-2:], ["--label", "debt"])
         self.assertEqual(pl.open_drafts(self.spec_dir), [])
-        self.assertIn("## [x] go/a.go:2 — gap 2 — https://github.com/o/r/issues/8", (pl.runs_of(self.spec_dir) / pl.ISSUES_FILE).read_text())
+        self.assertIn("## [x] go/a.go:2 — gap 2 — https://github.com/o/r/issues/8", pl.issues_file(self.spec_dir).read_text())
 
     def test_a_failure_part_way_leaves_the_filed_one_marked_and_the_rest_open(self):
         results = [subprocess.CompletedProcess([], 0, "https://github.com/o/r/issues/7\n", ""),

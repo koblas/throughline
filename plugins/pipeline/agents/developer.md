@@ -159,7 +159,7 @@ Scenarios complete: SCENARIO-01..NN. Last updated by SCENARIO-NN.
 - `<the trap>` — `<what it breaks>` (SCENARIO-XX)
 ```
 
-**Debt is never kept in STATE.md.** `.runs/` is gitignored, so a debt that lives only there is
+**Debt is never kept in STATE.md.** `.runs/` goes with the worktree, so a debt that lives only there is
 lost with the run. Anything you find and do not fix becomes an issue draft the moment you find
 it:
 
@@ -168,10 +168,11 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py debt <feature-slug> "<title>" --scenar
   --body "<what is owed, why it was left, and the later scenario that should close it if any>"
 ```
 
-It lands in `.runs/<feature-slug>/ISSUES.md` beside the reviewers' findings below MAJOR, and
-reaches GitHub only on the user's yes. When you close a drafted debt (yours or an earlier one),
-delete its `## [ ]` block from ISSUES.md and list it in your `## Handoff` as "closed by <test
-name or file:line>". Name every debt you drafted in the `## Handoff` too.
+It lands in the feature's issue drafts beside the reviewers' findings below MAJOR (in the git
+common directory, outside the worktree, so it outlives it), and reaches GitHub only on the user's
+yes. When you close a drafted debt (yours or an earlier one), remove its draft with
+`${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py debt <feature-slug> "<title>" --close "<test name or file:line>"`
+— never by editing the file — and list it in your `## Handoff` as "closed by <test name or file:line>". Name every debt you drafted in the `## Handoff` too.
 
 Maintenance rules — these keep it from growing:
 

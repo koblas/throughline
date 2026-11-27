@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -18,6 +19,7 @@ class BatchTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)  # the drafts live in its git dir
         (self.root / "docs" / "specs").mkdir(parents=True)
         self.path = self.root / ".runs" / "uerr" / "BATCH.md"
 
@@ -116,7 +118,7 @@ class BatchTest(unittest.TestCase):
         code, out, _ = self.batch(found="Drop the dead helper in libs/a", body="Nothing calls it.")
 
         self.assertEqual(code, 0)
-        issues = (self.root / ".runs" / "uerr" / "ISSUES.md").read_text()
+        issues = pl.issues_file(pl.spec_folder(self.root, "uerr")).read_text()
         self.assertIn("## [ ] Drop the dead helper in libs/a\n\nlabels: debt\n\nNothing calls it.", issues)
         self.assertIn("file-issues uerr --yes", out)
         self.assertEqual([d["title"] for d in pl.open_drafts(pl.spec_folder(self.root, "uerr"))],
