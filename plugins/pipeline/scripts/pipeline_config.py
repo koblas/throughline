@@ -53,7 +53,10 @@ PLUGIN = "pipeline"  # the plugin's name: the namespace Claude Code gives its ag
 CORE_BRIEF = ("briefs", "core.md")  # the standing brief every agent reads
 CONFIG = Path(".claude") / "pipeline.json"  # relative to the repo root
 PROFILE = Path(".claude") / "runner-settings.json"  # relative to the repo root
-REPO_BRIEFS = Path(".claude") / "briefs"  # the briefs a repo adds to the plugin's, relative to its root
+REPO_BRIEFS = Path(".claude") / "briefs"
+# The issue drafts, per feature: `<git common dir>/<DRAFTS_DIR>/<slug>/ISSUES.md` — outside every worktree
+# (`pipeline.issues_file()`; `session-context.py` lists the unfiled ones).
+DRAFTS_DIR = "pipeline"  # the briefs a repo adds to the plugin's, relative to its root
 LANGUAGES = ("go", "ts")
 MODES = ("pipeline", "single-session")  # `mode` in pipeline.json; the first is the default
 SINGLE_SESSION = "single-session"

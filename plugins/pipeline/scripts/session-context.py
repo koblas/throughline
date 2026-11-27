@@ -13,6 +13,10 @@ parts between `<!-- pipeline-only -->` markers (the implicit multi-agent trigger
 pipeline sequence, the agent-spawn authority, the two pauses) and `SINGLE_SESSION_NOTE` in their
 place: the lanes and the testing rule still hold there. The marker lines are never printed.
 
+In a repo with the config, either mode, it then lists every feature with issue drafts not yet
+filed (`<git common dir>/pipeline/<slug>/ISSUES.md`, where `pipeline.py` keeps them outside the
+worktree): found work waits there for the user's yes, so it must not be forgotten. It files nothing.
+
 A repo without `.claude/pipeline.json` gets one line saying the pipeline is not set up there,
 not the rules: without its config the pipeline cannot run, so it must not start implicitly.
 Never fails — a SessionStart hook that errors must not cost the session its start.
@@ -23,6 +27,7 @@ stdlib only.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,9 +54,33 @@ def rules(text: str, mode: str) -> str:
     return MARKER_RE.sub("", text)
 
 
+def unfiled(root: Path, drafts_dir: str) -> str:
+    """A note naming each feature whose issue drafts are not all filed, or "" when there are none.
+
+    Never raises: a note that cannot be read is left out, and the start goes on without it."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=root,
+                             capture_output=True, text=True, timeout=5)
+        drafts = Path(out.stdout.strip()) / drafts_dir if out.returncode == 0 else None
+        found = []
+        for path in sorted(drafts.glob("*/ISSUES.md")) if drafts and drafts.is_dir() else []:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            todo, claimed = len(re.findall(r"^## \[ \] ", text, re.M)), len(re.findall(r"^## \[~\] ", text, re.M))
+            if todo or claimed:
+                found.append(f"- `{path.parent.name}`: {todo} to file" + (f", {claimed} marked `[~]` (filing started, "
+                             "not confirmed: check GitHub)" if claimed else "") + f" — {path}")
+    except Exception:  # noqa: BLE001 — see the docstring
+        return ""
+    if not found:
+        return ""
+    return ("\n## Unfiled issue drafts\n\nFound work waiting for the user's yes. Mention it once, early: list a "
+            f"feature's drafts with `{HERE / 'pipeline.py'} file-issues <slug>` and file them only on their yes "
+            "(`--yes`).\n\n" + "\n".join(found) + "\n")
+
+
 def context(cwd: Path) -> str:
     sys.path.insert(0, str(HERE))
-    from pipeline_config import mode_of, repo_root  # noqa: PLC0415 — after the path insert
+    from pipeline_config import DRAFTS_DIR, mode_of, repo_root  # noqa: PLC0415 — after the path insert
 
     try:
         root = repo_root(cwd)
@@ -61,7 +90,8 @@ def context(cwd: Path) -> str:
         return (f"The pipeline plugin is enabled but this repo has no .claude/pipeline.json, "
                 f"so the pipeline is not set up here: do not enter it implicitly. "
                 f"(Plugin root: {PLUGIN_ROOT})\n")
-    return f"Pipeline plugin root: {PLUGIN_ROOT}\n\n" + rules(WORKFLOW.read_text(encoding="utf-8"), mode_of(root))
+    return (f"Pipeline plugin root: {PLUGIN_ROOT}\n\n" + rules(WORKFLOW.read_text(encoding="utf-8"), mode_of(root))
+            + unfiled(root, DRAFTS_DIR))
 
 
 def main() -> int:

@@ -120,7 +120,7 @@ STATE_FILE = "PIPELINE.json"
 # Findings below MAJOR, and what a capped gate leaves open, as GitHub issues not yet filed: nothing in it
 # reaches GitHub until the user says yes and `file-issues --yes` runs.
 ISSUES_FILE = "ISSUES.md"
-DRAFTS_DIR = "pipeline"  # under the git common directory: `drafts_root()`
+DRAFTS_DIR = cfg.DRAFTS_DIR  # under the git common directory: `drafts_root()`
 DRAFT_RE = re.compile(r"^## \[( |x|~)\] (.+?)(?: — (https://\S+))?$")
 SEVERITIES = ("BLOCKER", "MAJOR", "MINOR", "NIT")
 BUILD_BATCHES_PER_RUN = 3
