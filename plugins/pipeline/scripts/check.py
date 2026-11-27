@@ -534,6 +534,23 @@ def diff_coverage(root: Path, pkgs: list[str], profile: Path, base: str, to: str
                         lambda rel: changed_lines(root, rel, base, to), pc.load(root).generated_roots)
 
 
+def coverage_verdict(root: Path, pkgs: list[str], profile: Path, base: str, to: str,
+                     run: str | None) -> tuple[bool, str]:
+    """(failed, the line to print) for the coverage of a Go test step that passed.
+
+    No profile means the step's command has no `{cover}`: nothing was measured, so it fails
+    rather than reporting `coverage: ok` on an empty profile.
+    """
+    if run:
+        return False, "coverage: skipped (--run narrows the tests; the full phase run judges it)"
+    if not profile.is_file():
+        return True, ("coverage: FAILED (the test step wrote no coverage profile: add `{cover}` to its "
+                      "`phase` command in .claude/pipeline.json)")
+    if found := diff_coverage(root, pkgs, profile, base, to):
+        return True, "coverage: FAILED (changed blocks no test runs)\n" + capped("\n".join(found))
+    return False, "coverage: ok"
+
+
 def phase(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="check-cover.") as tmp:
         return _phase(args, Path(tmp) / "cover.out")
@@ -605,13 +622,9 @@ def _phase(args: argparse.Namespace, profile: Path) -> int:
                 count = f" — {ts.group(1).strip()}" if ts else f" — {passed} passed, {skipped} skipped (subtests included)"
             print(f"{name}: ok{count}")
             if name == "test" and language == "go":
-                if args.run:
-                    print("coverage: skipped (--run narrows the tests; the full phase run judges it)")
-                elif found := diff_coverage(root, args.go, profile, base, to):
-                    failed = True
-                    print("coverage: FAILED (changed blocks no test runs)\n" + capped("\n".join(found)))
-                else:
-                    print("coverage: ok")
+                bad, line = coverage_verdict(root, args.go, profile, base, to, args.run)
+                failed = failed or bad
+                print(line)
         else:
             failed = True
             print(f"{name}: FAILED ({' '.join(cmd)})\n{capped(out)}")

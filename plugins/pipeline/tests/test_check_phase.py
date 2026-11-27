@@ -396,5 +396,29 @@ class AllowlistGrowthTest(unittest.TestCase):
         self.assertEqual([], check.allowlist_growth(root, "HEAD", "HEAD"))
 
 
+class CoverageVerdictTest(unittest.TestCase):
+    """A Go test step that wrote no coverage profile is a failure, never `coverage: ok`."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_no_profile_fails_and_names_the_missing_placeholder(self):
+        failed, line = check.coverage_verdict(self.root, ["./a/"], self.root / "cover.out", "HEAD", "HEAD", None)
+
+        self.assertTrue(failed)
+        self.assertIn("coverage: FAILED", line)
+        self.assertIn("{cover}", line)
+
+    def test_a_narrowed_run_is_skipped_even_without_a_profile(self):
+        failed, line = check.coverage_verdict(self.root, ["./a/"], self.root / "cover.out", "HEAD", "HEAD", "Test_x")
+
+        self.assertFalse(failed)
+        self.assertIn("coverage: skipped", line)
+
+
 if __name__ == "__main__":
     unittest.main()

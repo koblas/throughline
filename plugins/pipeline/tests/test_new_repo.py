@@ -95,6 +95,17 @@ class ProductRepoTest(Repo):
         self.assertTrue(cfg.surface("go").is_test("internal/x/x_test.go"))
         self.assertEqual(["build", "lint", "test"], [p["name"] for p in cfg.surface("go").phase])
 
+    def test_the_go_test_phase_writes_the_coverage_profile_the_check_reads(self):
+        self.files(PRODUCT, "--yes")
+
+        go = pipeline_config.load(self.root).surface("go")
+        test = next(p["command"] for p in go.phase if p["name"] == "test")
+
+        self.assertIn("{cover}", test)
+        self.assertIn("{packages}", test)
+        self.assertIn("{run}", test)
+        self.assertIn(["go", "test", "./..."], [g["command"] for g in go.full_gates])
+
     def test_it_enables_the_shared_plugin_and_ignores_run_output(self):
         self.files(PRODUCT, "--yes")
 
