@@ -20,17 +20,28 @@ reviewer. On the following calls it writes `REVIEW-<NN>.md`, its verdict and its
 (unsandboxed, 10-minute timeout) and do what it prints.
 
 1. `REVIEWER DISCOVERY FAILED` (exit 2) → stop and report it. Do not report PASS.
-2. Spawn every agent under `## Spawn` in a **single message**, each with
+2. A `## Screens — before spawning` section (printed only when the round touches a surface whose
+   `.claude/pipeline.json` entry has a `ui`) comes first: start the app as it says, open each
+   screen in the browser pane, and save one screenshot per state to exactly the path listed. The
+   correctness reviewer's brief already names those paths; a state you could not reach is left
+   out and reported unchecked.
+3. Spawn every agent under `## Spawn` in a **single message**, each with
    `run_in_background: false` and exactly the prompt printed for it — the run tag, then the
    brief's path. Add nothing: the brief carries the diff, scope, briefs to read, prior
    findings and mutation survivors.
-3. A re-gate diffs the fix only, and `next --only a,b` (or `none`) names the reviewers
+4. A re-gate diffs the fix only, and `next --only a,b` (or `none`) names the reviewers
    `${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Judgement calls* → *Re-gate narrowly* keeps. The
    script keeps `arch-reviewer`, `api-reviewer` and `refactor-advisor` off every gate round;
    they run only in ad-hoc mode. There is one fix pass and one re-gate: a re-gate that still
    fails stops for the user (`${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Judgement calls* → *One fix pass*).
-4. The round lists any *security-sensitive paths* it changed. That is a note for the user:
+5. The round lists any *security-sensitive paths* it changed. That is a note for the user:
    `/security-hunt` is theirs to run and the gate never waits for it.
+6. **Findings go to the pull request.** Once the PR is open,
+   `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py post-review <slug> --pr <N> [--round NN]` shows the
+   round's findings as one PR review — an inline comment on each `file:line` the PR's diff shows,
+   the rest in the review's body (`next` names it when the gate finishes). Show it to the user;
+   on their yes, run it again with `--yes` to post it (`gh api`, a COMMENT review, never twice for
+   one round). Every MINOR and NIT is also an issue draft, filed with `file-issues` on their yes.
 
 Do NOT review code yourself — only orchestrate.
 

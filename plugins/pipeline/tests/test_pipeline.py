@@ -1192,6 +1192,20 @@ class GateTest(GateFixture):
         self.assertIn("| 1 | test-reviewer, correctness-reviewer | 0/1/0/1 | n/a | FAIL |", (pl.runs_of(self.spec_dir) / "METRICS.md").read_text())
         self.assertIn("run: gate-fix unit: REVIEW-01 feature: demo", out)
 
+    def test_a_fix_pass_applies_blockers_and_majors_and_folds_no_minor(self):
+        self.next()
+        self.reviewed(1, test_reviewer="[MAJOR] go/a_test.go:1 — vacuous\n[MINOR] go/a_test.go:4 — vague name",
+                      correctness_reviewer="[NIT] go/a_test.go:2 — spacing")
+
+        self.next()
+
+        brief = Path(pl.ACTION["brief"]).read_text()
+        self.assertIn("Fix every BLOCKER and MAJOR", brief)
+        self.assertIn("Every MINOR and NIT is drafted as an issue", brief)
+        self.assertNotIn("MINORs that sit", brief)
+        self.assertEqual([d["title"] for d in pl.open_drafts(self.spec_dir)],
+                         ["go/a_test.go:4 — vague name", "go/a_test.go:2 — spacing"])
+
     def test_a_spec_check_problem_fails_the_round(self):
         self.problems = ["demo SCENARIO-01: acceptance test failed"]
         self.next()
@@ -1347,6 +1361,149 @@ class GateTest(GateFixture):
         self.assertNotIn("gate-fix", out)
 
 
+PR_DIFF = """diff --git a/go/a_test.go b/go/a_test.go
+--- a/go/a_test.go
++++ b/go/a_test.go
+@@ -1,2 +1,4 @@
+ package a
++x
+-gone
++y
+ z
+diff --git a/go/old.go b/go/old.go
+--- a/go/old.go
++++ /dev/null
+@@ -1 +0,0 @@
+-package a
+"""
+
+
+class PostReviewTest(GateFixture):
+    """`post-review`: a round's findings as one PR review, shown first and posted only with --yes."""
+
+    def setUp(self):
+        super().setUp()
+        self.posted = []
+        self.post_fails = ""
+        self.real_gh = (pl.PR_DIFF, pl.POST_REVIEW)
+        pl.PR_DIFF = lambda root, pr: (PR_DIFF, "")
+        pl.POST_REVIEW = self.fake_post
+
+    def fake_post(self, root, pr, review):
+        self.posted.append((pr, review))
+        return ("", self.post_fails) if self.post_fails else ("https://github.com/o/r/pull/7#pullrequestreview-1", "")
+
+    def tearDown(self):
+        pl.PR_DIFF, pl.POST_REVIEW = self.real_gh
+        super().tearDown()
+
+    def round_one(self):
+        self.next()
+        self.reviewed(1, test_reviewer="[MAJOR] go/a_test.go:1 — vacuous\n  Failure: never red\n"
+                                       "[NIT] go/a_test.go:3 — spacing",
+                      correctness_reviewer="[MINOR] go/b.go:2 — vague name\n[MINOR] go/a_test.go:9 — past the hunk")
+        self.next("--finding", "[BLOCKER] race between revoke and refresh")
+
+    def post(self, *flags):
+        return self.run_cli("post-review", "demo", "--pr", "7", *flags)
+
+    def test_without_yes_the_review_is_shown_and_nothing_is_posted(self):
+        self.round_one()
+
+        code, out = self.post()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.posted, [])
+        self.assertIn("post-review demo --pr 7 --round 01 --yes", out)
+        inline, body = out.split("## In the review body")
+        self.assertIn("go/a_test.go:1", inline)
+        self.assertIn("go/a_test.go:3", inline)
+        self.assertNotIn("go/b.go:2", inline)
+        for rest in ("go/b.go:2", "go/a_test.go:9", "race between revoke and refresh"):
+            self.assertIn(rest, body)
+
+    def test_with_yes_one_review_is_posted_with_a_comment_on_each_line_in_the_diff(self):
+        self.round_one()
+
+        code, out = self.post("--yes")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.posted), 1)
+        pr, review = self.posted[0]
+        self.assertEqual(pr, 7)
+        self.assertEqual(review["event"], "COMMENT")
+        self.assertEqual([(c["path"], c["line"], c["side"]) for c in review["comments"]],
+                         [("go/a_test.go", 1, "RIGHT"), ("go/a_test.go", 3, "RIGHT")])
+        self.assertIn("never red", review["comments"][0]["body"])
+        self.assertIn("test-reviewer", review["comments"][0]["body"])
+        for rest in ("go/b.go:2", "go/a_test.go:9", "race between revoke and refresh", "REVIEW-01"):
+            self.assertIn(rest, review["body"])
+        self.assertIn("pullrequestreview-1", out)
+
+    def test_a_round_already_posted_is_not_posted_twice(self):
+        self.round_one()
+        self.post("--yes")
+
+        code, out = self.post("--yes")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.posted), 1)
+        self.assertIn("already posted", out)
+
+    def test_a_failed_post_says_so_and_can_be_run_again(self):
+        self.round_one()
+        self.post_fails = "HTTP 422: Unprocessable Entity"
+
+        code, _ = self.post("--yes")
+        self.post_fails = ""
+        again, _ = self.post("--yes")
+
+        self.assertEqual((code, again), (1, 0))
+        self.assertEqual(len(self.posted), 2)
+
+    def test_the_round_defaults_to_the_latest_and_can_be_named(self):
+        self.round_one()
+        self.next()
+        self.agent_ran("developer", "run: gate-fix unit: REVIEW-01 feature: demo", "fixed")
+        self.next()
+        self.next("--only", "test-reviewer")
+        self.reviewed(2, test_reviewer="[MINOR] go/a_test.go:2 — still vague")
+        self.next()
+
+        _, latest = self.post()
+        _, first = self.post("--round", "1")
+
+        self.assertIn("REVIEW-02", latest)
+        self.assertIn("still vague", latest)
+        self.assertIn("REVIEW-01", first)
+        self.assertIn("vacuous", first)
+
+    def test_a_round_with_no_findings_has_nothing_to_post(self):
+        self.next()
+        self.reviewed(1, test_reviewer="clean", correctness_reviewer="clean")
+        self.next()
+
+        code, out = self.post("--yes")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.posted, [])
+        self.assertIn("nothing to post", out)
+
+    def test_no_review_round_is_refused(self):
+        code, out = self.post()
+
+        self.assertEqual(code, 2)
+        self.assertIn("no REVIEW-", out)
+
+    def test_the_gate_that_passes_names_post_review(self):
+        self.next()
+        self.reviewed(1, test_reviewer="clean", correctness_reviewer="clean")
+
+        _, out = self.next()
+
+        self.assertIn("post-review demo --pr <N> --round 01", out)
+
+
 class RefuteTest(GateFixture):
     """One attempt to prove a round's reviewer MAJORs wrong, before the round is written."""
 
@@ -1445,6 +1602,7 @@ class RealGateTest(Feature):
             (agents / name).mkdir()
             (agents / name / "Agent.md").write_text(f"---\nname: {name}\ntype: reviewer\ntriggers: [{globs}]\n---\n")
         self.pre = pl.snap(self.root)
+        pl.ACTION.clear()  # each test reads the briefs its own gate wrote, never an earlier test's
         for path in ("go/services/core/authn/refresh.go", "go/services/core/todo/list.go",
                      "frontend/packages/auth/src/login.ts", "go/services/core/authn/refresh_test.go"):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
@@ -1471,6 +1629,15 @@ class RealGateTest(Feature):
 
         brief = next(Path(a["brief"]).read_text() for a in pl.ACTION["agents"] if a["agent"] == "correctness-reviewer")
         self.assertIn("judge the diff against the specification's", brief)
+
+    def test_every_reviewer_is_told_to_list_every_minor_and_nit(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.gate(self.root, "demo", 1, "HEAD", None, None, [])
+
+        for a in pl.ACTION["agents"]:
+            brief = Path(a["brief"]).read_text()
+            self.assertNotIn("capped", brief)
+            self.assertIn("List every MINOR and NIT", brief)
 
     def test_a_fix_to_a_security_sensitive_file_brings_back_its_correctness_reviewer(self):
         result, out = self.regate("pipeline:test-reviewer")
@@ -1514,6 +1681,55 @@ class RealGateTest(Feature):
         self.assertEqual(result["agents"], ["correctness-reviewer"])
         self.assertIn("pipeline-reviewer: no files matched triggers", out)
         self.assertIn("files changed: 1\n", out)
+
+    def with_ui(self, screens="`Sign-in`, `Account settings`", ui=True):
+        config = repo_fixture.content_buddy()
+        if ui:
+            config["surfaces"]["frontend"]["ui"] = {"url": "http://localhost:5173", "start": ["npm", "run", "dev"]}
+        repo_fixture.install(self.root, config, profile=False)
+        self.spec.write_text(self.spec.read_text().replace("**Screens**: none", f"**Screens**: {screens}"))
+        pl.ACTION.clear()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pl.gate(self.root, "demo", 1, "HEAD", None, None, [])
+        briefs = {a["agent"]: Path(a["brief"]).read_text() for a in pl.ACTION["agents"]}
+        return out.getvalue(), briefs
+
+    def test_a_ui_surface_the_round_touches_has_its_screens_shot_for_the_correctness_reviewer(self):
+        out, briefs = self.with_ui()
+
+        shots = pl.runs_of(self.spec_dir) / "screens"
+        self.assertIn("## Screens — before spawning", out)
+        self.assertLess(out.index("## Screens — before spawning"), out.index("## Spawn"))
+        self.assertIn("`npm run dev`", out)
+        self.assertIn("http://localhost:5173", out)
+        for state in ("loading", "empty", "error", "populated"):
+            self.assertIn(f"{shots / f'sign-in-{state}.png'}", out)
+            self.assertIn(f"{shots / f'account-settings-{state}.png'}", briefs["ts-correctness-reviewer"])
+        self.assertIn("Screen states", briefs["ts-correctness-reviewer"])
+        self.assertNotIn("screens/", briefs["correctness-reviewer"])
+        self.assertEqual([len(x["shots"]) for x in pl.ACTION["screens"]], [8])
+
+    def test_a_surface_without_ui_gets_no_screens_step(self):
+        out, briefs = self.with_ui(ui=False)
+
+        self.assertNotIn("## Screens", out)
+        self.assertNotIn("screens/", briefs["ts-correctness-reviewer"])
+        self.assertNotIn("screens", pl.ACTION)
+
+    def test_a_ui_surface_the_round_does_not_touch_gets_no_screens_step(self):
+        (self.root / "frontend/packages/auth/src/login.ts").unlink()
+
+        out, briefs = self.with_ui()
+
+        self.assertNotIn("## Screens", out)
+        self.assertNotIn("screens", pl.ACTION)
+
+    def test_a_spec_that_names_no_screen_gets_no_screens_step(self):
+        out, briefs = self.with_ui(screens="none")
+
+        self.assertNotIn("## Screens", out)
+        self.assertNotIn("screens/", briefs["ts-correctness-reviewer"])
 
     def test_lists_the_sensitive_paths_as_the_users_call(self):
         result, out = self.regate("pipeline:test-reviewer")

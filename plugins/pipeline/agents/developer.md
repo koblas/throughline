@@ -197,10 +197,9 @@ Findings arrive ranked `[BLOCKER|MAJOR|MINOR|NIT] <file>:<line>` with `Failure:`
 2. **BLOCKER and MAJOR mandatory** — fix every one on files in your scope. Fix that would
    change agreed behavior or contradict specification → stop and report instead of silently
    reinterpreting spec.
-3. **MINORs in the list sit in files a blocking fix already edits** (`${CLAUDE_PLUGIN_ROOT}/briefs/fix-pass.md`
-   → *Fix passes*). Apply contained ones. Say which you skip and why — never widen scope for a
-   MINOR.
-4. **NIT optional.** Ignore unless one-token change.
+3. **MINOR and NIT are not yours to fix** (`${CLAUDE_PLUGIN_ROOT}/briefs/fix-pass.md` → *Fix
+   passes*): each is already an issue draft. Leave them, even in a file a blocking fix edits.
+4. **Something new you find and leave** → `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py debt <slug> "<title>"`, never a fold.
 5. Finding whose `Failure:` you cannot reproduce is not licence to skip it — say so in report,
    fix the code rather than the test.
 6. **Apply `${CLAUDE_PLUGIN_ROOT}/briefs/fix-pass.md` → *Fixing a finding* (MANDATORY)** — sweep

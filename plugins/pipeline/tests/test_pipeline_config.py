@@ -102,6 +102,37 @@ class ValidationTest(unittest.TestCase):
         config["surfaces"]["go"]["full_gates"][0]["command"] = "heph run //go:test-all"
         self.assertIn("`surfaces.go.full_gates[0].command` must be a non-empty list", self.refusal(config))
 
+    def test_a_surface_with_a_ui_is_read_with_its_url_and_start_command(self):
+        config = repo_fixture.content_buddy()
+        config["surfaces"]["frontend"]["ui"] = {"url": "http://localhost:5173", "start": ["npm", "run", "dev"]}
+        repo_fixture.install(self.root, config, profile=False)
+
+        loaded = pc.load(self.root)
+
+        self.assertEqual(loaded.surface("frontend").ui, {"url": "http://localhost:5173", "start": ["npm", "run", "dev"]})
+        self.assertIsNone(loaded.surface("go").ui)
+
+    def test_a_ui_may_leave_out_its_start_command(self):
+        config = repo_fixture.content_buddy()
+        config["surfaces"]["frontend"]["ui"] = {"url": "https://localhost:5174"}
+        repo_fixture.install(self.root, config, profile=False)
+
+        self.assertEqual(pc.load(self.root).surface("frontend").ui, {"url": "https://localhost:5174"})
+
+    def test_a_ui_of_the_wrong_shape_is_refused_by_its_key(self):
+        for ui, why in ((["http://localhost:5173"], "`surfaces.frontend.ui` must be a dict"),
+                        ({"start": ["npm", "run", "dev"]}, "`surfaces.frontend.ui.url` is missing"),
+                        ({"url": 5173}, "`surfaces.frontend.ui.url` must be a str"),
+                        ({"url": "localhost:5173"}, "`surfaces.frontend.ui.url` must be an http:// or https:// URL"),
+                        ({"url": "http://localhost:5173", "start": "npm run dev"},
+                         "`surfaces.frontend.ui.start` must be a non-empty list"),
+                        ({"url": "http://localhost:5173", "start": []},
+                         "`surfaces.frontend.ui.start` must be a non-empty list")):
+            with self.subTest(ui=ui):
+                config = repo_fixture.content_buddy()
+                config["surfaces"]["frontend"]["ui"] = ui
+                self.assertIn(why, self.refusal(config))
+
     def test_a_repo_without_a_config_is_told_where_it_belongs(self):
         with self.assertRaises(pc.ConfigError) as caught:
             pc.load(self.root)
