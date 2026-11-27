@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.5.0](https://github.com/koblas/throughline/compare/v0.4.0...v0.5.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **check:** move checks.reason_parity and checks.error_allowlist into the repo as scripts run from a surface's `phase` list, with `{base}` and `{to}`, and delete the `checks` keys from .claude/pipeline.json.
+* **pipeline:** a repo whose reviewers or architect relied on the built-in lists (storage.md, navigation.md, proof.md for correctness) must add a briefs map to .claude/pipeline.json.
+
+### Features
+
+* **check:** run a repo's own diff checks as phase steps ([1b66f2d](https://github.com/koblas/throughline/commit/1b66f2d138937ae3b17600bcddfb610ec67cb2cf))
+* **metrics:** log check wall-clock and compare each feature with the pre-rollout baseline ([eac3a28](https://github.com/koblas/throughline/commit/eac3a28583cd6381aa0111f475f0edee2a77d1f9))
+* **metrics:** log check wall-clock and compare each feature with the pre-rollout baseline ([8dd386e](https://github.com/koblas/throughline/commit/8dd386e7d1cf38303d13241260153bc95a8ca7f2))
+* **new-repo:** start a repo brief, and say at session start when one is missing ([c54283d](https://github.com/koblas/throughline/commit/c54283dbaf9f333ed5f358ddf0fed0aa104399a6))
+* **pipeline:** a feature that edits its own language adapter stops for a person ([7b12a57](https://github.com/koblas/throughline/commit/7b12a5739f7488c5d45f28146d02fb406c6eba6c))
+* **pipeline:** adapter surfaces in the gate, spec-check and the end-to-end test ([17b1ba7](https://github.com/koblas/throughline/commit/17b1ba7cf43f598fc26ff68e7a8a0a326864dd45))
+* **pipeline:** keep found work durable and stop on spec/GitHub disagreement ([5ba6e5b](https://github.com/koblas/throughline/commit/5ba6e5b2f22d70be1e02e60ccc80f710378ec993))
+* **pipeline:** keep issue drafts outside the worktree ([3294678](https://github.com/koblas/throughline/commit/3294678cff16eef9a387c8ad2ef0ca036af9a90e))
+* **pipeline:** language adapters for languages the plugin does not ship ([c695986](https://github.com/koblas/throughline/commit/c695986149039fab650a8e981b6e38586604a5fa))
+* **pipeline:** language adapters for repo-supplied languages in config, phase and next ([95e3f66](https://github.com/koblas/throughline/commit/95e3f6609231ff9d38b03abef0677c8b7c75abcc))
+* **pipeline:** name each agent's extra briefs in the repo config ([cf26a3b](https://github.com/koblas/throughline/commit/cf26a3ba5d9450f34b3d9e8cb714aad29178dcbd))
+* **pipeline:** spell out the debt command, drop declined drafts, record folds ([6afc5dc](https://github.com/koblas/throughline/commit/6afc5dc9666cf8085ebfbd0580f0e63dd15680ca))
+* **pipeline:** stop when GitHub closed a scenario the spec says is unbuilt ([0ea5bc2](https://github.com/koblas/throughline/commit/0ea5bc26222ee3b65709f81ecdbafd7680477ec1))
+* **runner:** file a finished feature's issue drafts when the repo allows it ([891d25c](https://github.com/koblas/throughline/commit/891d25c8d093f03ff8b7624a9b28db88b9920d34))
+* **session-context:** list unfiled issue drafts at session start ([bb454ae](https://github.com/koblas/throughline/commit/bb454aece3c6c8f493fc77eb9aafd273d621fc3d))
+
+
+### Performance
+
+* **tests:** run the suite in parallel and skip the needless mutation repair ([96312d4](https://github.com/koblas/throughline/commit/96312d4e4755a97cd37b0116118a7d3eaa263743))
+* **tests:** run the suite in parallel and skip the needless mutation repair ([84d9799](https://github.com/koblas/throughline/commit/84d9799437e72874de456c0cd058f3b3834ca11d))
+
 ## [0.4.0](https://github.com/koblas/throughline/compare/v0.3.0...v0.4.0) (2026-11-27)
 
 
