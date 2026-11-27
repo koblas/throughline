@@ -211,4 +211,7 @@ Then, in order:
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py open-issues <slug>` lists the feature issue, the triage comment and the
    sub-issues; `open-issues <slug> --yes` (the approval covers it) creates them, links each sub-issue
    under the feature issue and writes the numbers into the spec. It is resumable: rerun it after a
-   failure; a `~` it reports is checked on GitHub by hand, never re-created.
+   failure; a `~` it reports is checked on GitHub by hand, never re-created. Each issue body has
+   five parts, one line each: `Why:` (what is missing and for whom: the feature's from
+   **Primary goal**, a scenario's from its title and `Action:`), `Design:` (a requirement id or the
+   spec path), `State:`, `Approach:`, `Done when:`. The target is about 500 characters, not a limit.

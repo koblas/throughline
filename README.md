@@ -18,7 +18,7 @@ plugins/pipeline/                 the plugin
   agents/      the pipeline's own agents (spawned as pipeline:<name>)
   briefs/      workflow, orchestration, build, review, proof … rules the agents read
   commands/    /pipeline:run-feature, /pipeline:run-reviewers, /pipeline:intent-and-goal, /pipeline:new-reviewer,
-               /pipeline:new-repo
+               /pipeline:new-repo, /pipeline:retro
   hooks/       SessionStart context, the acceptance-test lock, per-edit checks
   scripts/     pipeline.py (the conductor), runner.py (unattended runs), check.py, spec-check.py, new-repo.py, …
   skills/      tdd, adr, api-conventions, legacy-code
@@ -53,6 +53,12 @@ The scripts read their config from the repo they run in, never from beside thems
 
 - `.claude/pipeline.json` — the repo's surfaces (roots, gates, generated paths, budgets).
   `plugins/pipeline/scripts/pipeline_config.py` validates it and documents the schema.
+  Its optional `"mode"` is `"pipeline"` (the default) or `"single-session"`. A single-session repo
+  gets the lanes and the testing rule at session start but not the implicit multi-agent trigger,
+  the two pauses or the agent-spawn authority. `runner.py` and `pipeline.py next` refuse to run
+  there. The work is done in the session, and `/pipeline:retro <slug>` writes a Full-lane feature's
+  retro from its merged PRs. Everything that reads `surfaces` (the per-edit hook and lock,
+  `diff-coverage.py`, `not-built.py`) works the same in both modes.
 - `.claude/runner-settings.json` — the unattended runner's permission profile.
 
 `plugins/pipeline/tests/fixtures/` holds a full example of both.

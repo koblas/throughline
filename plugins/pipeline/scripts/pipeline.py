@@ -21,6 +21,10 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
   file-issues <slug|file.md> [--yes] [--pause S]  list issue drafts; --yes (the user's yes) files them
   open-issues <slug> [--yes] [--pause S]
                                     the spec's feature issue and one sub-issue per scenario; --yes creates them
+  retro <slug> [--pr N ...] [--reply FILE]
+                                    the feature's retro outside `next` (`/pipeline:retro`): without --reply,
+                                    the pipeline-reviewer brief — from the ledger when .runs/<slug>/ has one,
+                                    else from the feature's merged PRs on GitHub; with it, writes the retro
   batch <slug> [--units A,B | --from-file F] [--done UNIT --tests CMD] [--found TITLE [--body T] [--label L ...]]
                                     the Direct lane: a mechanical migration's checklist, .runs/<slug>/BATCH.md,
                                     one unit per package; prints the next unit (exit 3 when all are done)
@@ -44,6 +48,8 @@ the reason and what to do. Pass conditions and the feature budget default from t
 
 A checkpoint and a gate run mutants and the spec's acceptance tests, which open listeners:
 call `next` unsandboxed, with a 10-minute timeout.
+In a repo whose .claude/pipeline.json sets `"mode": "single-session"`, `next` and `record` refuse in
+one line: the work is done in the session, and `retro`, `open-issues` and `batch` still run.
 Exit status: 0 when an action was printed, 2 when it refused, 3 when the feature is done.
 """
 
@@ -1156,6 +1162,9 @@ def gh(root: Path, *args: str) -> subprocess.CompletedProcess:
 def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     """The spec's tracker entries: the feature issue, the triage brief on it, one sub-issue per scenario.
 
+    Every body is five lines: Why (what is missing and for whom: `feature_why`, `scenario_why`), Design
+    (the spec path, or the scenario's anchor in it), State, Approach, Done when.
+
     Without `yes` it lists what would be created. With it, each create is claimed first (`Issue: ~`,
     `Feature issue: ~`) and the number written after, so a run cut off part-way resumes with the rest and
     never creates twice; a claim left behind is reported for the user to check by hand. A sub-issue that
@@ -1208,7 +1217,7 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     if not feature:
         set_link(path, "Feature issue", "~")
         number = create(title, ["feature", *areas], "\n".join([
-            f"Design: [{rel}]({rel})", "State: approved, not built",
+            feature_why(text, title), f"Design: [{rel}]({rel})", "State: approved, not built",
             f"Approach: one sub-issue per scenario, built in order by `{script('pipeline.py')} next`",
             "Done when: every sub-issue is closed and the gate has passed"]))
         if number is None:
@@ -1248,7 +1257,7 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
         set_scenario_issue(path, b["id"], "~")
         anchor = github_anchor(f"{b['id']} — {b['title']}" if b["title"] else b["id"])
         number = create(b["title"] or b["id"], ["scenario", *areas], "\n".join([
-            f"Design: [{rel} → {b['id']}]({rel}#{anchor})", "State: not built",
+            scenario_why(b), f"Design: [{rel} → {b['id']}]({rel}#{anchor})", "State: not built",
             f"Approach: {b['action'] or 'see the scenario'}; " + ("an architect plans it" if b["size"] == "large"
                                                                   else "its first developer run plans it"),
             f"Done when: its acceptance test passes and every case of {b['id']} has a test; the pipeline closes this"]))
@@ -1261,6 +1270,22 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
         print(f"opened #{number} — {b['id']}")
         failed += not link(number, b["id"])
     return 1 if failed or claimed else 0
+
+
+def feature_why(text: str, title: str) -> str:
+    """The feature issue's first line: what is missing and for whom, from the spec's *Intent* section —
+    its `**Primary goal**:` line, else the section's first line, else the title."""
+    intent = section(text, "Intent and out of scope") or ""
+    goal = re.search(r"^\*\*Primary goal\*\*:\s*(.+)$", intent, re.M)
+    first = next((l.strip() for l in intent.splitlines() if l.strip()), "")
+    said = (goal.group(1) if goal else first or title).strip().rstrip(".")
+    return f"Why: not possible yet — {said}."
+
+
+def scenario_why(block: dict) -> str:
+    """A scenario issue's first line: what is missing and for whom, from its title and its `Action:`."""
+    title = block["title"] or block["id"]
+    return f"Why: not built yet — {title}" + (f" (`{block['action'].strip('`')}`)" if block["action"] else "") + "."
 
 
 def gh_issue_states(root: Path, numbers: list) -> dict[int, str]:
@@ -1567,20 +1592,152 @@ def record(root: Path, slug: str, state: dict, projects: Path, extra: list[str],
     elif kind == "gate-fix":
         state["rounds"][-1]["fix_done"] = True
     elif kind == "retro":
-        # .runs/ is gitignored and goes with the worktree: the retro carries the feature's ledger with it.
-        metrics = runs_of(spec_dir) / "METRICS.md"
-        ledger = re.sub(r"^(#+) ", r"#\1 ", metrics.read_text().strip(), flags=re.M) if metrics.is_file() else ""
-        retro = retro_file(spec_dir)
-        retro.parent.mkdir(parents=True, exist_ok=True)
-        retro.write_text(replies["pipeline-reviewer"].strip() + "\n" + (f"\n## Metrics\n\n{ledger}\n" if ledger else ""))
+        notes += write_retro(root, slug, replies["pipeline-reviewer"])
         state["retro"] = True
-        notes.append(f"wrote {retro.relative_to(root)}")
-        fixed = subprocess.run([str(HERE / "retro-stats.py"), "--fix", slug], cwd=root, capture_output=True, text=True)
-        notes += [f"retro rule candidate {line}" for line in fixed.stdout.splitlines() if line.strip()]
     notes.append(f"replies saved under {saved}")
     state["pending"] = None
     state.pop("cut_off", None)  # a step has reported since: nothing is half-done any more
     return notes
+
+
+def has_ledger(spec_dir: Path) -> bool:
+    """Whether the feature was built through `next`: its `.runs/<slug>/` holds a cursor or a METRICS.md."""
+    runs = runs_of(spec_dir, make=False)
+    return (runs / STATE_FILE).is_file() or (runs / "METRICS.md").is_file()
+
+
+NO_LEDGER = "no ledger: single-session"
+
+
+def write_retro(root: Path, slug: str, reply_text: str) -> list[str]:
+    """Save the pipeline-reviewer's retro reply as docs/specs/<slug>.retro.md, then hold its rule
+    candidates to the recurrence threshold (`retro-stats.py --fix`). Returns notes for the orchestrator.
+
+    With a ledger the feature's METRICS.md goes under `## Metrics`; without one (a single-session
+    feature) `## Cost by stage` is set to say so, whatever the reply put there.
+    """
+    spec_dir = spec_folder(root, slug)
+    retro = retro_file(spec_dir)
+    retro.parent.mkdir(parents=True, exist_ok=True)
+    if has_ledger(spec_dir):
+        # .runs/ is gitignored and goes with the worktree: the retro carries the feature's ledger with it.
+        metrics = runs_of(spec_dir) / "METRICS.md"
+        ledger = re.sub(r"^(#+) ", r"#\1 ", metrics.read_text().strip(), flags=re.M) if metrics.is_file() else ""
+        retro.write_text(reply_text.strip() + "\n" + (f"\n## Metrics\n\n{ledger}\n" if ledger else ""))
+    else:
+        retro.write_text(reply_text.strip() + "\n")
+        replace_section(retro, "## Cost by stage", NO_LEDGER)
+    notes = [f"wrote {retro.relative_to(root)}"]
+    fixed = subprocess.run([str(HERE / "retro-stats.py"), "--fix", slug], cwd=root, capture_output=True, text=True)
+    return notes + [f"retro rule candidate {line}" for line in fixed.stdout.splitlines() if line.strip()]
+
+
+def retro_brief(root: Path, slug: str, work: Path, evidence: str = "") -> str:
+    """The pipeline-reviewer's retro brief and its spawn block (`emit`): the other features' recurrence
+    tables, and, for a feature with no ledger, the evidence gathered from its merged PRs."""
+    tag = tag_line("final", "feature", slug)
+    stats = subprocess.run([str(HERE / "retro-stats.py"), "--exclude", slug], cwd=root, capture_output=True, text=True)
+    body = f"retro {slug}\n\n## Recurrence in the other features' retros\n\n{stats.stdout or stats.stderr}"
+    if evidence:
+        body += f"\n{evidence}"
+    return emit(work, tag, "pipeline-reviewer", body, extra=f"retro {slug}")
+
+
+FIX_COMMIT_RE = re.compile(r"^(?:fix|revert)(?:\([^)]*\))?!?:|^fix\b", re.I)
+
+
+def gh_json(root: Path, *args: str):
+    """A `gh` call's JSON output; refuses with gh's reason when the call fails."""
+    out = gh(root, *args)
+    if out.returncode != 0:
+        raise Refuse(f"`gh {' '.join(args[:3])}` failed: {(out.stderr or out.stdout).strip()[-300:]}")
+    try:
+        return json.loads(out.stdout or "null")
+    except json.JSONDecodeError as why:
+        raise Refuse(f"`gh {' '.join(args[:3])}` printed no JSON: {why}") from None
+
+
+def feature_prs(root: Path, slug: str, spec_text: str, given: list[int]) -> list[int]:
+    """The feature's merged PRs: the ones given, else every merged PR whose title, body or branch names
+    the slug or one of the spec's issues (the feature issue and each scenario's)."""
+    if given:
+        return sorted(set(given))
+    feature = FEATURE_ISSUE_RE.search(section(spec_text, "Links") or "")
+    issues = {int(feature.group(2))} if feature and feature.group(2) else set()
+    issues |= {b["issue"] for b in scenario_blocks(spec_text) if isinstance(b["issue"], int)}
+    refs = re.compile(rf"(?<![\w-]){re.escape(slug)}(?![\w-])" + "".join(rf"|#{n}\b" for n in sorted(issues)))
+    prs = gh_json(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,title,body,headRefName")
+    return sorted(p["number"] for p in prs or []
+                  if refs.search(" ".join(str(p.get(k) or "") for k in ("title", "body", "headRefName"))))
+
+
+def pr_evidence(root: Path, slug: str, spec_text: str, given: list[int]) -> str:
+    """What a retro with no ledger reads instead of one: per merged PR, the gate findings raised on it
+    (the shared `[SEVERITY]` lines in its reviews and comments, parsed as `next` parses a gate's), its
+    other review comments, and its fix commits."""
+    prs = feature_prs(root, slug, spec_text, given)
+    lines = [f"## Evidence — {NO_LEDGER}", "",
+             f"`.runs/{slug}/` has no ledger, so there are no run tokens, checkpoint or REVIEW reports. The escapes "
+             "come from the feature's merged PRs below: a BLOCKER/MAJOR raised on a PR, or a fix commit on it, "
+             "is an escape found at that PR (`found_in`: `PR-#N`). Token fields are `n/a`.", ""]
+    if not prs:
+        return "\n".join(lines + ["No merged PR names the feature or its issues: the escapes table is `n/a`; "
+                                   "pass the PRs with `retro <slug> --pr N`."]) + "\n"
+    for n in prs:
+        pr = gh_json(root, "pr", "view", str(n), "--json", "number,title,url,mergedAt,reviews,comments,commits") or {}
+        inline = gh_json(root, "api", f"repos/{{owner}}/{{repo}}/pulls/{n}/comments", "--paginate") or []
+        said = [(r.get("author", {}).get("login", "?"), r.get("body") or "", "review") for r in pr.get("reviews", [])]
+        said += [(c.get("author", {}).get("login", "?"), c.get("body") or "", "comment") for c in pr.get("comments", [])]
+        said += [(c.get("user", {}).get("login", "?"), c.get("body") or "",
+                  f"{c.get('path', '?')}:{c.get('line') or c.get('original_line') or 0}") for c in inline]
+        found = merge_findings([f for who, body, _ in said for f in findings(body, who, root)])
+        remarks = [(who, where, body) for who, body, where in said if body.strip() and not findings(body, who, root)]
+        fixes = [c for c in pr.get("commits", []) if FIX_COMMIT_RE.match(c.get("messageHeadline", ""))]
+        lines += [f"### PR-#{n} — {pr.get('title', '')}", "", f"{pr.get('url', '')} — merged {pr.get('mergedAt', '?')}", "",
+                  f"Gate findings ({counts(found)} B/M/m/n):"]
+        lines += [f"- {f['text'][0]} — {', '.join(f['reviewers'])}" for f in found] or ["- none"]
+        lines += ["", "Review comments:"]
+        lines += [f"- {where} ({who}): {clip(' '.join(body.split()))}" for who, where, body in remarks] or ["- none"]
+        lines += ["", "Fix commits:"]
+        lines += [f"- {c.get('oid', '')[:8]} {c.get('messageHeadline', '')}" for c in fixes] or ["- none"]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def clip(text: str, limit: int = 240) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def retro_command(root: Path, slug: str, reply_file: str | None, prs: list[int]) -> int:
+    """`/pipeline:retro`: the retro `next` runs at the end of a feature, run on its own — with the ledger
+    when the feature has one, from its merged PRs when it does not (a single-session feature)."""
+    spec_dir = spec_folder(root, slug)
+    if not spec_file(spec_dir).is_file():
+        raise Refuse(f"no specification at {spec_file(spec_dir).relative_to(root)} — a retro is of a specified feature")
+    cursor = runs_of(spec_dir, make=False) / STATE_FILE
+    if reply_file:
+        reply_path = Path(reply_file)
+        if not reply_path.is_file() or not reply_path.read_text().strip():
+            raise Refuse(f"no reply in `{reply_file}` — save the pipeline-reviewer's reply there verbatim")
+        for note in write_retro(root, slug, reply_path.read_text()):
+            print(f"recorded: {note}")
+        if cursor.is_file():  # `next` must not ask for this feature's retro again
+            state = json.loads(cursor.read_text())
+            state["retro"] = True
+            cursor.write_text(json.dumps(state, indent=1) + "\n")
+        return 0
+    ledger = has_ledger(spec_dir)
+    evidence = "" if ledger else pr_evidence(root, slug, spec_file(spec_dir).read_text(), prs)
+    work = Path(tempfile.mkdtemp(prefix=f"retro-{slug}."))
+    print(f"# retro — `{slug}` ({'from its ledger, .runs/' + slug + '/' if ledger else NO_LEDGER})\n")
+    print("## Spawn — one agent, `run_in_background: false`, exactly this prompt\n")
+    print(retro_brief(root, slug, work, evidence))
+    reply_at = work / "reply.md"
+    print(f"\nThen save its reply verbatim to `{reply_at}` and run "
+          f"`{script('pipeline.py')} retro {slug} --reply {reply_at}`: it writes "
+          f"{retro_file(spec_dir).relative_to(root)}.")
+    ACTION.update(kind="spawn", reply=str(reply_at))
+    return 0
 
 
 def finish_checkpoint(spec_dir: Path, slug: str, unit: str, s: dict, found: list[dict], ran: bool = True) -> None:
@@ -1980,11 +2137,8 @@ def next_gate(root: Path, slug: str, state: dict, args: argparse.Namespace, work
         state["final"] = "scored"
     if not state["retro"]:
         print("stage: retro")
-        tag = tag_line("final", "feature", slug)
-        stats = subprocess.run([str(HERE / "retro-stats.py"), "--exclude", slug], cwd=root, capture_output=True, text=True)
-        block = emit(work, tag, "pipeline-reviewer", f"retro {slug}\n\n## Recurrence in the other features' retros\n\n"
-                     f"{stats.stdout or stats.stderr}", extra=f"retro {slug}")
-        spawn(state, "retro", "feature", tag, ["pipeline-reviewer"], [block])
+        block = retro_brief(root, slug, work)
+        spawn(state, "retro", "feature", tag_line("final", "feature", slug), ["pipeline-reviewer"], [block])
         return 0
     print(f"DONE — `{slug}` has shipped and its retro is written ({retro_file(spec_dir).relative_to(root)}).")
     if drafts := open_drafts(spec_dir):
@@ -2064,6 +2218,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--found", metavar="TITLE", help="draft an issue in ISSUES.md for something found and not fixed")
     b.add_argument("--body", default="", help="the drafted issue's body")
     b.add_argument("--label", action="append", metavar="L", help="the drafted issue's labels (default: debt)")
+    rt = sub.add_parser("retro", help="the feature's retro on its own (/pipeline:retro); with --reply, write it")
+    rt.add_argument("slug")
+    rt.add_argument("--reply", metavar="FILE", help="the pipeline-reviewer's reply: write it as the retro")
+    rt.add_argument("--pr", action="append", type=int, default=[], metavar="N",
+                    help="no ledger: a merged PR of the feature (default: the merged PRs that name it or its issues)")
+    rt.add_argument("--json", action="store_true", help="also print the action as JSON after `=== ACTION ===`")
     g = sub.add_parser("gate", help="step 7 / 9")
     g.add_argument("slug")
     g.add_argument("--round", type=int, required=True, metavar="NN")
@@ -2142,6 +2302,18 @@ def _run(args: argparse.Namespace, root: Path) -> int:
         return batch(root, args.slug, units, args.done, args.tests, args.found, args.body, args.label)
     if args.cmd == "gate":
         return 0 if gate(root, args.slug, args.round, args.base, args.pre_fix, args.only, args.exclude) else 2
+    if args.cmd == "retro":
+        try:
+            return retro_command(root, args.slug, args.reply, args.pr)
+        except Refuse as why:
+            ACTION.update(kind="refused", why=str(why))
+            print(f"REFUSED — {why}")
+            return 2
+    if args.cmd in ("next", "record") and config(root).single_session:
+        why = cfg.single_session_refusal(f"`pipeline.py {args.cmd}`", root)
+        ACTION.update(kind="refused", why=why)
+        print(f"REFUSED — {why}")
+        return 2
 
     spec_dir = spec_folder(root, args.slug)
     try:
