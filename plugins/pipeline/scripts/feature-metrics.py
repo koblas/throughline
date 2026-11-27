@@ -34,6 +34,14 @@ and the model is read from the transcript, not agent frontmatter. Two costs are 
 Time is agent time: for each run, its first to its last response. Reviewers that ran in
 parallel are each counted, so the total is work done, not time on the clock.
 
+Check time is wall-clock: `scripts/check.py` logs each post-edit hook and each phase check to
+`.runs/check-times.jsonl`, and the lines inside the feature's window (its first run's start to its last
+run's end) are summed by mode and check. It is time a person or the runner waited, not agent time.
+
+The baseline line compares the feature with the ledger from before the rollout of 2026-11-24 (BASELINE):
+about $47 a feature, a third of it on review and fix passes. A feature far off it in either direction
+is worth a sentence in the retro.
+
 Usage:  scripts/feature-metrics.py <feature-slug> [--projects-dir DIR]
         scripts/feature-metrics.py --scenario-p90
 The first prints markdown to paste into .runs/<slug>/METRICS.md → *Tokens*.
@@ -51,7 +59,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -78,6 +86,11 @@ TYPES = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output")
 WEIGHTS = {"input": 1.0, "cache_write_5m": 1.25, "cache_write_1h": 2.0, "cache_read": 0.1, "output": 5.0}
 KINDS = ("scope", "plan", "build", "checkpoint", "checkpoint-fix", "review", "refute", "gate-fix", "final", "judge", "other")
 IMPLEMENTER_KINDS = ("build", "checkpoint-fix", "gate-fix")
+# The cost of a feature before the rollout of 2026-11-24, from content_buddy's ledgers: 39 features priced
+# at $1,817 (about $47 each), with review and its fix passes about 33% of spend.
+BASELINE = {"usd": 47.0, "review_share": 0.33}
+REVIEW_KINDS = ("checkpoint", "checkpoint-fix", "review", "refute", "gate-fix")
+TIMES_FILE = Path(".runs") / "check-times.jsonl"  # written by scripts/check.py
 MIN_SCENARIOS = 20
 # $ per million tokens, Anthropic first-party API, checked 2026-09-25. Longest matching prefix
 # wins, so a dated id (`claude-haiku-4-5-20251001`) finds its row. Cache writes are 1.25x
@@ -357,6 +370,49 @@ def table(title: str, header: list[str], rows: list[list[str]]) -> None:
         print("| " + " | ".join(row) + " |")
 
 
+def check_times(root: Path, start: str, end: str) -> dict[tuple[str, str], list[float]]:
+    """Seconds of each logged check (`scripts/check.py`) inside [start, end], by (mode, check)."""
+    out: dict[tuple[str, str], list[float]] = defaultdict(list)
+    path = root / TIMES_FILE
+    if not path.is_file() or not start or not end:
+        return out
+    def moment(text: str) -> datetime:
+        at = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+    lo, hi = moment(start), moment(end)
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            e = json.loads(line)
+            at = moment(e["at"])
+            if lo <= at <= hi:
+                out[(e["mode"], e["check"])].append(float(e["seconds"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def check_time_rows(times: dict[tuple[str, str], list[float]]) -> list[list[str]]:
+    """Rows of the *Check time* table, the costliest first."""
+    rows = []
+    for (mode, check), secs in sorted(times.items(), key=lambda kv: -sum(kv[1])):
+        rows.append([mode, check, str(len(secs)), f"{statistics.median(secs):.1f}s", f"{pct(secs, 0.95):.1f}s",
+                     hms(sum(secs)) if sum(secs) >= 60 else f"{sum(secs):.0f}s"])
+    return rows
+
+
+def baseline_line(dollars: float, review_dollars: float) -> str:
+    """The feature against BASELINE: its dollars, and review and fix passes as a share of them."""
+    share = review_dollars / dollars if dollars else 0.0
+    return (f"- **Against the pre-rollout baseline:** {usd(dollars)} vs about {usd(BASELINE['usd'])} a feature; "
+            f"review and fix passes {share:.0%} of dollars vs about {BASELINE['review_share']:.0%}")
+
+
+def repo_root() -> Path:
+    out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return Path(out.stdout.strip()) if out.returncode == 0 else Path.cwd()
+
+
 def scenario_p90(runs: list[Run]) -> int:
     per_scenario: dict[tuple[str, str], float] = defaultdict(float)
     for r in runs:
@@ -428,6 +484,7 @@ def main() -> int:
         print(f"- **UNKNOWN RUN KINDS booked as `other`:** {names} — a tag carries a kind "
               f"({', '.join(KINDS[:-1])}), not a role name")
     print("- Raw tokens: " + ", ".join(f"{t} {k(n)}" for t, n in raw.items()))
+    print(baseline_line(dollars, sum(r.dollars for r in runs if r.kind in REVIEW_KINDS)))
 
     def group(key) -> dict[str, list[Run]]:
         out: dict[str, list[Run]] = defaultdict(list)
@@ -454,6 +511,14 @@ def main() -> int:
     table("By agent", ["Agent", *cols], rows(by_agent))
     table("By run kind", ["Kind", *cols], rows(by_kind))
     table("By unit", ["Unit", *cols, "Token share", "Dollar share"], rows(by_unit, share=True))
+
+    starts, ends = [r.start for r in runs if r.start], [r.end for r in runs if r.end]
+    times = check_times(repo_root(), min(starts, default=""), max(ends, default=""))
+    if times:
+        table("Check time (wall-clock, from .runs/check-times.jsonl)",
+              ["Mode", "Check", "Runs", "Median", "p95", "Total"], check_time_rows(times))
+    else:
+        print("\n- Check time: none logged in this feature's window (`.runs/check-times.jsonl`)")
 
     impl = [r for r in runs if r.agent_type == "developer" and r.kind in IMPLEMENTER_KINDS]
     if impl:

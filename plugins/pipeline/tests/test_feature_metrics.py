@@ -172,3 +172,37 @@ class FormatTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckTimeTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        (self.root / ".runs").mkdir()
+        lines = [{"at": "2026-11-27T10:00:00+00:00", "mode": "hook", "check": "go", "seconds": 2.0, "ok": True},
+                 {"at": "2026-11-27T10:05:00+00:00", "mode": "hook", "check": "go", "seconds": 4.0, "ok": True},
+                 {"at": "2026-11-27T10:06:00+00:00", "mode": "phase", "check": "test", "seconds": 90.0, "ok": False},
+                 {"at": "2026-11-27T12:00:00+00:00", "mode": "hook", "check": "go", "seconds": 99.0, "ok": True}]
+        (self.root / ".runs" / "check-times.jsonl").write_text("\n".join(map(json.dumps, lines)) + "\nnot json\n")
+
+    def test_only_checks_inside_the_features_window_count(self):
+        times = fm.check_times(self.root, "2026-11-27T09:59:00Z", "2026-11-27T11:00:00Z")
+
+        self.assertEqual(dict(times), {("hook", "go"): [2.0, 4.0], ("phase", "test"): [90.0]})
+
+    def test_the_table_puts_the_costliest_check_first(self):
+        rows = fm.check_time_rows(fm.check_times(self.root, "2026-11-27T09:59:00Z", "2026-11-27T11:00:00Z"))
+
+        self.assertEqual(rows[0][:3], ["phase", "test", "1"])
+        self.assertEqual(rows[0][5], "2m")
+        self.assertEqual(rows[1], ["hook", "go", "2", "3.0s", "4.0s", "6s"])
+
+    def test_no_log_means_no_times(self):
+        self.assertEqual(dict(fm.check_times(self.root / "nowhere", "2026-11-27T09:59:00Z", "2026-11-27T11:00:00Z")), {})
+
+    def test_the_baseline_line_compares_dollars_and_the_review_share(self):
+        line = fm.baseline_line(30.0, 6.0)
+
+        self.assertIn("$30.00 vs about $47.00", line)
+        self.assertIn("review and fix passes 20% of dollars vs about 33%", line)

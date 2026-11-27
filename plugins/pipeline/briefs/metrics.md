@@ -66,8 +66,10 @@ pipeline does not run `/security-hunt`; a hunt the user runs is tagged
 
 ## Tokens
 <output of `scripts/feature-metrics.py <feature-slug>`, pasted once at the end: weighted
-tokens (model-blind, the unit of every baseline), dollars at each run's own model price, and
-agent time. An `UNPRICED MODELS` line means a model needs a row in the script's `PRICES`>
+tokens (model-blind, the unit of every baseline), dollars at each run's own model price, agent
+time, the feature against the pre-rollout baseline (about $47, a third on review and fix passes),
+and the *Check time* table: wall-clock seconds of the post-edit hook and each phase check, from
+`.runs/check-times.jsonl`. An `UNPRICED MODELS` line means a model needs a row in the script's `PRICES`>
 
 ## Escaped defects
 | Found | Defect | Where | Link |
@@ -82,4 +84,7 @@ mistaken for one nobody checked.
 ## Judging a pipeline change
 
 `.claude/ADOPTION-efficiency.md` holds the baseline and the pass thresholds a pipeline change
-is judged against. One feature is a signal, not proof.
+is judged against. One feature is a signal, not proof. A trial a constant in `scripts/pipeline.py`
+marks (the checkpoint off since 2026-11-24, say) is judged in the first process review after it
+has run on the features it names: compare gate MAJORs per feature, the review share and the check
+time of those features with the ones before, and keep or revert it in `docs/process-reviews.md`.
