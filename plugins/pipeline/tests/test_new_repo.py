@@ -125,6 +125,37 @@ class ProductRepoTest(Repo):
         self.assertIn("go-version-file: go.mod", ci)
         self.assertIn("working-directory: web", ci)
 
+    def test_ci_runs_the_not_built_and_diff_coverage_checks_from_the_plugin_at_its_release(self):
+        self.files(PRODUCT, "--yes")
+
+        ci = self.read(".github/workflows/checks.yaml")
+        version = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())["version"]
+        self.assertIn(f"ref: v{version}", ci)
+        self.assertIn("issues: read", ci)
+        self.assertIn("  not-built:\n", ci)
+        self.assertIn(".throughline/plugins/pipeline/scripts/not-built.py", ci)
+        self.assertIn("  diff-coverage:\n", ci)
+        self.assertIn(".throughline/plugins/pipeline/scripts/diff-coverage.py", ci)
+
+    def test_ci_has_no_diff_coverage_job_without_a_go_surface(self):
+        self.files({**PRODUCT, "surfaces": {"web": PRODUCT["surfaces"]["web"]}}, "--yes")
+
+        ci = self.read(".github/workflows/checks.yaml")
+        self.assertIn("  not-built:\n", ci)
+        self.assertNotIn("diff-coverage", ci)
+
+    def test_it_denies_reading_env_files_in_any_folder(self):
+        self.files(PRODUCT, "--yes")
+
+        deny = json.loads(self.read(".claude/settings.json"))["permissions"]["deny"]
+        self.assertEqual(["Read(**/.env)", "Read(**/.env.*)"], deny)
+
+    def test_it_starts_docs_specs(self):
+        out = self.files(PRODUCT, "--yes")
+
+        self.assertIn("- docs/specs/README.md: create", out.stdout)
+        self.assertIn("docs/specs/<slug>.md", self.read("docs/specs/README.md"))
+
     def test_it_says_which_gate_reviewers_the_repo_must_still_create(self):
         self.put(".claude/agents/correctness-reviewer.md", "---\nname: correctness-reviewer\n---\n")
 
@@ -156,6 +187,14 @@ class InfrastructureRepoTest(Repo):
         self.assertIn("kubectl kustomize apps/", self.read(".github/workflows/checks.yaml"))
         self.assertTrue((self.root / "SECURITY.md").is_file())
         self.assertIs(True, json.loads(self.read(".claude/settings.json"))["enabledPlugins"]["pipeline@throughline"])
+
+    def test_its_ci_runs_only_verify(self):
+        self.files(INFRA, "--yes")
+
+        ci = self.read(".github/workflows/checks.yaml")
+        self.assertNotIn("not-built", ci)
+        self.assertNotIn("throughline", ci)
+        self.assertFalse((self.root / "docs" / "specs").exists())
 
     def test_it_must_name_its_verify_commands(self):
         out = self.files({k: v for k, v in INFRA.items() if k != "verify"})
@@ -204,12 +243,22 @@ class ExistingFilesTest(Repo):
 
         self.assertIn("- .claude/settings.json: merge", out.stdout)
         settings = json.loads(self.read(".claude/settings.json"))
-        self.assertEqual({"allow": ["Read"]}, settings["permissions"])
+        self.assertEqual({"allow": ["Read"], "deny": ["Read(**/.env)", "Read(**/.env.*)"]}, settings["permissions"])
         self.assertEqual({"other@x": True, "pipeline@throughline": True}, settings["enabledPlugins"])
         self.assertNotIn("$schema", settings)
 
-    def test_settings_that_already_enable_the_plugin_are_not_rewritten(self):
-        text = '{"extraKnownMarketplaces": {"throughline": {}}, "enabledPlugins": {"pipeline@throughline": true}}'
+    def test_deny_rules_are_added_beside_the_existing_ones_once(self):
+        self.put(".claude/settings.json", json.dumps({"permissions": {"deny": ["Bash(curl *)", "Read(**/.env)"]}}))
+
+        self.files(PRODUCT, "--yes")
+        self.files(PRODUCT, "--yes")
+
+        deny = json.loads(self.read(".claude/settings.json"))["permissions"]["deny"]
+        self.assertEqual(["Bash(curl *)", "Read(**/.env)", "Read(**/.env.*)"], deny)
+
+    def test_settings_that_already_enable_the_plugin_and_deny_env_are_not_rewritten(self):
+        text = ('{"extraKnownMarketplaces": {"throughline": {}}, "enabledPlugins": {"pipeline@throughline": true}, '
+                '"permissions": {"deny": ["Read(**/.env)", "Read(**/.env.*)"]}}')
         self.put(".claude/settings.json", text)
 
         out = self.files(PRODUCT, "--yes")
@@ -328,6 +377,75 @@ class LabelsTest(Repo):
         self.assertNotIn("- feature: create", out.stdout)
 
 
+# A fake `gh` for `github`: logs its argv; `repo view` prints the repo; fails on argv matching $GH_FAIL.
+FAKE_GH_REPO = """#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+if [ "$1 $2" = "repo view" ]; then printf '%s' '{"nameWithOwner":"koblas/acme","defaultBranchRef":{"name":"main"}}'; exit 0; fi
+case "$*" in *"$GH_FAIL"*) if [ -n "$GH_FAIL" ]; then echo "HTTP 403: Upgrade to GitHub Pro" >&2; exit 1; fi;; esac
+case "$*" in *"--input -"*) cat > "$GH_LOG.body";; esac
+exit 0
+"""
+
+
+class GitHubTest(Repo):
+    def setUp(self):
+        super().setUp()
+        bin_dir = self.root.parent / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(FAKE_GH_REPO)
+        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+        self.log = self.root.parent / "gh.log"
+        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GH_LOG": str(self.log),
+                    "GH_FAIL": ""}
+        self.files(PRODUCT, "--yes")
+
+    def github(self, *flags):
+        return run(self.root, "github", *flags, env=self.env)
+
+    def writes(self):
+        calls = self.log.read_text().splitlines() if self.log.exists() else []
+        return [c for c in calls if not c.startswith("repo view")]
+
+    def test_without_yes_it_shows_the_protection_and_link_and_changes_nothing(self):
+        out = self.github("--project", "koblas/2")
+
+        self.assertEqual(0, out.returncode, out.stderr)
+        self.assertIn("main: require pull requests and the checks verify, not-built, diff-coverage", out.stdout)
+        self.assertIn("Project koblas/2: link koblas/acme", out.stdout)
+        self.assertEqual([], self.writes())
+
+    def test_yes_protects_the_default_branch_with_the_workflow_jobs_and_links_the_project(self):
+        out = self.github("--project", "koblas/2", "--yes")
+
+        self.assertEqual(0, out.returncode, out.stderr)
+        self.assertIn("api -X PUT repos/koblas/acme/branches/main/protection --input -", self.writes())
+        self.assertIn("project link 2 --owner koblas --repo koblas/acme", self.writes())
+
+    def test_the_required_checks_sent_are_the_jobs_in_the_workflow(self):
+        self.assertEqual(["verify", "not-built", "diff-coverage"], nr.workflow_jobs(self.root))
+        body = nr.protection(["verify", "not-built"])
+        self.assertEqual(["verify", "not-built"], body["required_status_checks"]["contexts"])
+        self.assertIsNotNone(body["required_pull_request_reviews"])
+
+    def test_a_refused_protection_is_reported_and_the_link_still_runs(self):
+        self.env["GH_FAIL"] = "protection"
+
+        out = self.github("--project", "koblas/2", "--yes")
+
+        self.assertEqual(1, out.returncode)
+        self.assertIn("HTTP 403", out.stderr)
+        self.assertIn("project link 2 --owner koblas --repo koblas/acme", self.writes())
+
+    def test_a_repo_without_the_workflow_is_refused(self):
+        (self.root / ".github" / "workflows" / "checks.yaml").unlink()
+
+        out = self.github()
+
+        self.assertEqual(2, out.returncode)
+        self.assertIn("run `files` first", out.stderr)
+
+
 class LabelDataTest(unittest.TestCase):
     def test_every_label_is_well_formed(self):
         labels = json.loads(nr.LABELS.read_text())["labels"]
@@ -362,6 +480,7 @@ class TemplatesTest(unittest.TestCase):
         command = (PLUGIN / "commands" / "new-repo.md").read_text()
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py files --answers -", command)
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py labels --kind", command)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py github", command)
 
 
 if __name__ == "__main__":

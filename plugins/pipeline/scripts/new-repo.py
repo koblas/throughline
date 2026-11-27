@@ -5,19 +5,27 @@
 repo is the same every time. Two kinds of repo:
 
 - **product** — runs the pipeline: the plugin enabled, `.claude/pipeline.json` (its surfaces),
-  a short `CLAUDE.md`, `SECURITY.md`, `docs/product/README.md`, a CI workflow, `/.runs/` ignored.
+  a short `CLAUDE.md`, `SECURITY.md`, `docs/product/README.md`, `docs/specs/README.md`, a CI
+  workflow, `/.runs/` ignored.
 - **infrastructure** — the Direct lane only, debt in issues: the plugin enabled, a `CLAUDE.md`
   that says so, `SECURITY.md` and CI. No `.claude/pipeline.json`, so the pipeline never starts.
 
     scripts/new-repo.py files  --answers <file|-> [--root DIR] [--yes] [--overwrite PATH ...]
     scripts/new-repo.py labels --kind product|infrastructure [--root DIR] [--yes] [--update]
+    scripts/new-repo.py github [--project OWNER/NUMBER] [--root DIR] [--yes]
 
 Without `--yes` each prints what it would do and changes nothing. With it, `files` creates only
 the files that are missing: an existing file is skipped unless its path is named with
 `--overwrite`, except `.claude/settings.json`, whose plugin keys are merged in (nothing else in it
 changes) and `.gitignore`, which gets `/.runs/` appended. `labels` creates the missing labels of
 `labels.json` (the one list of them) with `gh`; a label that exists with another colour or
-description is reported and changed only with `--update`.
+description is reported and changed only with `--update`. `github` protects the default branch
+(pull requests only, every job of `.github/workflows/checks.yaml` required) and, with `--project`,
+links the repo to that GitHub Project.
+
+A product repo's CI also runs the plugin's not-built check and, for its Go surfaces, the
+diff-coverage check on pull requests, both from a checkout of the plugin at its release tag.
+`.claude/settings.json` gets read denials for `.env` files in any folder.
 
 The answers (JSON):
 
@@ -54,6 +62,9 @@ KINDS = ("product", "infrastructure")
 MARKETPLACE = "throughline"
 PLUGIN_KEY = f"pipeline@{MARKETPLACE}"
 MARKETPLACE_SOURCE = {"source": {"source": "github", "repo": "koblas/throughline"}}
+PLUGIN_REPO = "koblas/throughline"
+# Read denials every repo starts with: secrets in dotenv files, in any folder.
+DENY = ["Read(**/.env)", "Read(**/.env.*)"]
 
 PASS_CONDITIONS = ["gate_rounds <= 2", "dev_runs_max <= 8", "stops <= 1", "cost_per_scenario_usd <= 5"]
 FEATURE_BUDGET_USD = 75
@@ -172,6 +183,46 @@ def ci_setup(surfaces: dict) -> str:
     return "".join(dict.fromkeys(steps))
 
 
+def plugin_version() -> str:
+    return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+
+
+def plugin_checkout() -> str:
+    """The workflow step that checks out this plugin at its release tag into `.throughline`."""
+    return (f"      - uses: actions/checkout@v7\n        with:\n          repository: {PLUGIN_REPO}\n"
+            f"          ref: v{plugin_version()}\n          path: .throughline\n          persist-credentials: false\n")
+
+
+def ci_jobs(surfaces: dict) -> str:
+    """A product repo's jobs beside `verify`: not-built always, diff-coverage when it has a Go surface."""
+    script = ".throughline/plugins/pipeline/scripts"
+    jobs = ("\n  not-built:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - uses: actions/checkout@v7\n        with:\n          persist-credentials: false\n"
+            + plugin_checkout()
+            + "      - name: Not-built marks match open issues\n        env:\n"
+              "          GH_TOKEN: ${{ github.token }}\n"
+              f"        run: python3 {script}/not-built.py\n")
+    go = [s for s in surfaces.values() if s["language"] == "go"]
+    if go:
+        loop = "".join(
+            f"          (cd {shlex.quote(s['root'])} && pkgs=$(git diff --name-only --relative \"$BASE\" HEAD -- '*.go' |\n"
+            "            xargs -r -n1 dirname | sort -u | while read -r d; do if [ -d \"$d\" ]; then echo \"./$d\"; fi; done) &&\n"
+            f"            if [ -n \"$pkgs\" ]; then python3 \"$GITHUB_WORKSPACE/{script}/diff-coverage.py\" "
+            "--base \"$BASE\" --to HEAD $pkgs;\n"
+            f"            else echo \"diff-coverage ({s['root']}): no Go package changed\"; fi)\n"
+            for s in go)
+        jobs += ("\n  # Every Go block the pull request adds or changes runs in a test; a block that cannot says why\n"
+                 "  # on its opening line: `// uncovered: <why>`.\n"
+                 "  diff-coverage:\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n"
+                 "    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n"
+                 "          persist-credentials: false\n"
+                 + plugin_checkout() + ci_setup({n: s for n, s in surfaces.items() if s["language"] == "go"})
+                 + "      - name: Changed Go blocks run in a test\n        env:\n"
+                   "          BASE: ${{ github.event.pull_request.base.sha }}\n        run: |\n"
+                   "          set -euo pipefail\n" + loop)
+    return jobs
+
+
 def load_answers(raw, root: Path) -> dict:
     if not isinstance(raw, dict):
         raise AnswerError("the answers must be a JSON object")
@@ -209,11 +260,14 @@ def contents(a: dict) -> dict[str, str]:
         ".github/workflows/checks.yaml": render(template("checks.yaml"), {
             "setup": ci_setup(a["surfaces"]),
             "verify_run": "\n".join(" " * 10 + v for v in a["verify"]),
+            "permissions": "  issues: read\n" if a["kind"] == "product" else "",
+            "jobs": ci_jobs(a["surfaces"]) if a["kind"] == "product" else "",
         }),
     }
     if a["kind"] == "product":
         out[".claude/pipeline.json"] = json.dumps(pipeline_config(a["surfaces"]), indent=2) + "\n"
         out["docs/product/README.md"] = render(template("product-README.md"), values)
+        out["docs/specs/README.md"] = render(template("specs-README.md"), values)
     return out
 
 
@@ -229,11 +283,16 @@ def merged_settings(path: Path) -> tuple[str, str | None]:
             return f"skip — not valid JSON ({why}); add the marketplace and plugin by hand", None
         if not isinstance(data, dict):
             return "skip — not a JSON object; add the marketplace and plugin by hand", None
-        if MARKETPLACE in data.get("extraKnownMarketplaces", {}) and data.get("enabledPlugins", {}).get(PLUGIN_KEY) is True:
-            return "unchanged — the plugin is already enabled", None
-        action = f"merge — adds `extraKnownMarketplaces.{MARKETPLACE}` and `enabledPlugins.{PLUGIN_KEY}`, keeps the rest"
+        deny = data.get("permissions", {}).get("deny", []) if isinstance(data.get("permissions"), dict) else []
+        if (MARKETPLACE in data.get("extraKnownMarketplaces", {})
+                and data.get("enabledPlugins", {}).get(PLUGIN_KEY) is True and all(d in deny for d in DENY)):
+            return "unchanged — the plugin is already enabled and `.env` reads denied", None
+        action = (f"merge — adds `extraKnownMarketplaces.{MARKETPLACE}`, `enabledPlugins.{PLUGIN_KEY}` and the "
+                  "`.env` read denials, keeps the rest")
     data.setdefault("extraKnownMarketplaces", {}).setdefault(MARKETPLACE, MARKETPLACE_SOURCE)
     data.setdefault("enabledPlugins", {})[PLUGIN_KEY] = True
+    deny = data.setdefault("permissions", {}).setdefault("deny", [])
+    deny += [d for d in DENY if d not in deny]
     return action, json.dumps(data, indent=2) + "\n"
 
 
@@ -302,9 +361,9 @@ def label_set(kind: str) -> list[dict]:
     return [lab for lab in data["labels"] if kind in lab["kinds"]]
 
 
-def gh(root: Path, *args: str) -> subprocess.CompletedProcess:
+def gh(root: Path, *args: str, input: str | None = None) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["gh", *args], cwd=root, capture_output=True, text=True)
+        return subprocess.run(["gh", *args], cwd=root, capture_output=True, text=True, input=input)
     except FileNotFoundError:
         return subprocess.CompletedProcess(["gh", *args], 127, "", "gh is not installed (https://cli.github.com)")
 
@@ -342,6 +401,60 @@ def labels(root: Path, kind: str, yes: bool, update: bool) -> int:
     return 1 if failed else 0
 
 
+def workflow_jobs(root: Path) -> list[str]:
+    """The job ids of `.github/workflows/checks.yaml`, in order: the checks branch protection requires."""
+    text = (root / ".github" / "workflows" / "checks.yaml").read_text(encoding="utf-8")
+    body = text.split("\njobs:\n", 1)[1] if "\njobs:\n" in text else ""
+    return re.findall(r"^  ([\w-]+):\s*$", body, re.M)
+
+
+def protection(checks: list[str]) -> dict:
+    """The branch-protection body: changes land by pull request, with every check green."""
+    return {"required_status_checks": {"strict": False, "contexts": checks},
+            "enforce_admins": False,
+            "required_pull_request_reviews": {"required_approving_review_count": 0},
+            "restrictions": None}
+
+
+def github(root: Path, project: str | None, yes: bool) -> int:
+    """Protect the default branch with the workflow's jobs, and link the repo to a Project."""
+    if not (root / ".github" / "workflows" / "checks.yaml").is_file():
+        print("new-repo: no .github/workflows/checks.yaml — run `files` first", file=sys.stderr)
+        return 2
+    owner = num = None
+    if project:
+        owner, _, num = project.partition("/")
+        if not owner or not num.isdigit():
+            print(f"new-repo: --project must be OWNER/NUMBER (got {project!r})", file=sys.stderr)
+            return 2
+    view = gh(root, "repo", "view", "--json", "nameWithOwner,defaultBranchRef")
+    if view.returncode != 0:
+        print(f"new-repo: gh repo view failed: {(view.stderr or view.stdout).strip()}", file=sys.stderr)
+        return 1
+    repo = json.loads(view.stdout)
+    name, branch = repo["nameWithOwner"], repo["defaultBranchRef"]["name"]
+    checks = workflow_jobs(root)
+    print(f"new-repo github ({name})" + (" — applied:" if yes else " — applied only on the user's yes, with `--yes`:")
+          + f"\n\n- {branch}: require pull requests and the checks {', '.join(checks)}")
+    if project:
+        print(f"- Project {owner}/{num}: link {name}")
+    if not yes:
+        return 0
+    failed = 0
+    out = gh(root, "api", "-X", "PUT", f"repos/{name}/branches/{branch}/protection", "--input", "-",
+             input=json.dumps(protection(checks)))
+    if out.returncode != 0:
+        failed += 1
+        print(f"branch protection on {branch} failed (a private repo on the free plan cannot have it): "
+              f"{(out.stderr or out.stdout).strip()}", file=sys.stderr)
+    if project:
+        out = gh(root, "project", "link", num, "--owner", owner, "--repo", name)
+        if out.returncode != 0:
+            failed += 1
+            print(f"project link failed: {(out.stderr or out.stdout).strip()}", file=sys.stderr)
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -352,13 +465,17 @@ def main(argv: list[str] | None = None) -> int:
     lab = sub.add_parser("labels", help="the standard issue labels")
     lab.add_argument("--kind", required=True, choices=KINDS)
     lab.add_argument("--update", action="store_true", help="also change labels that exist with another colour or description")
-    for p in (f, lab):
+    g = sub.add_parser("github", help="branch protection on the default branch, and the Project link")
+    g.add_argument("--project", metavar="OWNER/NUMBER", help="the Project to link the repo to")
+    for p in (f, lab, g):
         p.add_argument("--root", default=".", help="the repo (default: the working directory)")
         p.add_argument("--yes", action="store_true", help="act; without it, only print the plan")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
     if args.cmd == "labels":
         return labels(root, args.kind, args.yes, args.update)
+    if args.cmd == "github":
+        return github(root, args.project, args.yes)
     try:
         text = sys.stdin.read() if args.answers == "-" else Path(args.answers).read_text(encoding="utf-8")
         answers = json.loads(text)
