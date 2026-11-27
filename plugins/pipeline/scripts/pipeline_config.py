@@ -20,8 +20,8 @@ naming that key.
 pipeline with its implicit trigger, two pauses, conductor (`pipeline.py next`) and unattended runner —
 or `"single-session"`: the work is done in the session itself, so `session-context.py` loads only
 the rules that still apply (the lanes, the testing rule) with a note in place of the rest, and
-`runner.py` and `pipeline.py next` refuse to run. Everything that reads `surfaces` works the same in
-either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
+`runner.py` and `pipeline.py next` refuse to run, and `pass_conditions` and `feature_budget_usd`, which
+only those two read, may be left out. Everything that reads `surfaces` works the same in either mode. `mode_of(root)` reads it without validating the rest, for the session-start hook.
 
 Agent names leave the scripts through `agent()` and come back through `role_of()`: the plugin's own
 agents are spawned as `pipeline:<name>`, the repo's own (its surface reviewers) by their bare name.
@@ -223,8 +223,8 @@ class Surface:
 class Config:
     def __init__(self, root: Path, path: Path, raw: dict):
         self.root, self.path, self.raw = root, path, raw
-        self.pass_conditions: list[str] = raw["pass_conditions"]
-        self.feature_budget_usd: float = raw["feature_budget_usd"]
+        self.pass_conditions: list[str] = raw.get("pass_conditions", [])  # absent only in single-session
+        self.feature_budget_usd: float | None = raw.get("feature_budget_usd")  # absent only in single-session
         self.surfaces = [Surface(n, s) for n, s in raw["surfaces"].items()]
         self.security_re = re.compile(raw["security_paths"]) if raw.get("security_paths") else None
         self.build_definitions_re = re.compile(raw["build_definitions"]) if raw.get("build_definitions") else None
@@ -314,10 +314,14 @@ def validate(path: Path, raw) -> None:
     """Raise ConfigError naming the first key that is missing or of the wrong shape."""
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: must be a JSON object")
-    _need(path, raw, "pass_conditions", "str_list", "")
-    _need(path, raw, "feature_budget_usd", "number", "")
-    if _need(path, raw, "mode", str, "", optional=True) not in (None, *MODES):
+    mode = _need(path, raw, "mode", str, "", optional=True)
+    if mode not in (None, *MODES):
         _fail(path, "mode", f"must be one of {', '.join(MODES)}")
+    # The gate's pass conditions and the runner's budget are read only by `next` and the runner,
+    # which a single-session repo never runs: there they may be left out.
+    gate_optional = mode == SINGLE_SESSION
+    _need(path, raw, "pass_conditions", "str_list", "", optional=gate_optional)
+    _need(path, raw, "feature_budget_usd", "number", "", optional=gate_optional)
     surfaces = _need(path, raw, "surfaces", dict, "")
     if not surfaces:
         _fail(path, "surfaces", "must name at least one surface")

@@ -79,6 +79,25 @@ class ValidationTest(unittest.TestCase):
         config["surfaces"]["frontend"]["language"] = "rust"
         self.assertIn("`surfaces.frontend.language` must be one of go, ts", self.refusal(config))
 
+    def test_a_single_session_repo_may_leave_out_the_gate_keys(self):
+        config = repo_fixture.content_buddy() | {"mode": "single-session"}
+        del config["pass_conditions"], config["feature_budget_usd"]
+        repo_fixture.install(self.root, config, profile=False)
+
+        loaded = pc.load(self.root)
+
+        self.assertEqual(loaded.pass_conditions, [])
+        self.assertIsNone(loaded.feature_budget_usd)
+
+    def test_a_pipeline_repo_still_needs_the_gate_keys(self):
+        config = repo_fixture.content_buddy() | {"mode": "pipeline"}
+        del config["pass_conditions"]
+        self.assertIn("`pass_conditions` is missing", self.refusal(config))
+
+    def test_a_single_session_repo_that_sets_the_gate_keys_has_them_checked(self):
+        config = repo_fixture.content_buddy() | {"mode": "single-session", "feature_budget_usd": "lots"}
+        self.assertIn("`feature_budget_usd` must be a number", self.refusal(config))
+
         config = repo_fixture.content_buddy()
         config["surfaces"]["go"]["full_gates"][0]["command"] = "heph run //go:test-all"
         self.assertIn("`surfaces.go.full_gates[0].command` must be a non-empty list", self.refusal(config))
