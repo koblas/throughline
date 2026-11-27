@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """mutation-sample — mutate a sample of the feature's changed Go lines and list the survivors.
 
-Runs at each scenario checkpoint and before each gate round. It picks up to --max changed production lines (non-test .go
-files outside go/gen/), arms and conjuncts first, then guards, comparisons, error returns and boolean literals,
+`scripts/pipeline.py next` runs it before the developer run that ticks a scenario (on what the scenario
+has built so far) and before each gate round (on the feature's diff); the per-scenario checkpoint,
+when it is turned on (`CHECKPOINT`), samples the finished scenario too. It picks up to --max changed
+production lines (the production globs of the repo config's `go` surface, .claude/pipeline.json:
+non-test .go files, generated code excluded), arms and conjuncts first, then guards, comparisons, error returns and boolean literals,
 applies ONE mutation per line, runs that package's tests, and restores the line.
 
   arm          `case X:` / `default:` → `case X: break` (the arm does nothing)
@@ -20,8 +23,7 @@ Go: the working tree is never written. The mutated file goes to $TMPDIR and `go 
 substitutes it at build time, so a run that dies leaves nothing behind.
 
 With --frontend (or --surface naming a `ts` surface of the repo's .claude/pipeline.json) it samples
-production TypeScript instead (the surface's production globs: frontend/packages/*/src, not tests,
-not genapi, here): `if (X) {` → `if (!(X)) {`, the same comparison swaps with `===` ↔ `!==`, and
+production TypeScript instead (the surface's production globs: not tests, not generated code): `if (X) {` → `if (!(X)) {`, the same comparison swaps with `===` ↔ `!==`, and
 boolean flips. Each mutant runs `vitest related <file> --run` in its workspace, capped at two
 minutes. vitest has no overlay, so the line is mutated IN PLACE and restored: the original is
 first saved to a journal in the git directory, and --repair (which `scripts/pipeline.py next`
