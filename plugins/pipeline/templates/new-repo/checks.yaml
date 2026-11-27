@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: read
-
+{{permissions}}
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -22,3 +22,4 @@ jobs:
         run: |
           set -euo pipefail
 {{verify_run}}
+{{jobs}}

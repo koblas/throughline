@@ -1,5 +1,5 @@
 ---
-description: Set up the baseline a new repository starts from — the shared pipeline plugin enabled, a short CLAUDE.md, SECURITY.md, docs/product/ (product repos), a CI workflow and the standard issue labels. Asks whether it is a product or an infrastructure repo and, for a product repo, its surfaces; shows every file and label before writing, and never replaces an existing file without asking.
+description: Set up the baseline a new repository starts from — the shared pipeline plugin enabled, `.env` reads denied, a short CLAUDE.md, SECURITY.md, docs/product/ and docs/specs/ (product repos), a CI workflow, the standard issue labels, branch protection and the Project link. Asks whether it is a product or an infrastructure repo and, for a product repo, its surfaces; shows every file and label before writing, and never replaces an existing file without asking.
 argument-hint: <optional — product | infrastructure, and anything already decided>
 allowed-tools: Read, Glob, AskUserQuestion, Bash(${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py *), Bash(git rev-parse *)
 ---
@@ -28,7 +28,9 @@ not to skip asking.
 3. **Product only — the surfaces**, each: a name, its language (`go` or `ts`; the pipeline knows
    no other), its root directory, and its build, test and (optional) lint commands, run from that
    root. Propose them from the build files found in step 1.
-4. **Verify** — the commands CI runs from the repo root. A product repo defaults to each surface's
+4. **Project** — the GitHub Project its issues go to, as `OWNER/NUMBER` (`gh project list
+   --owner <owner>`), or none.
+5. **Verify** — the commands CI runs from the repo root. A product repo defaults to each surface's
    build, lint and test; an infrastructure repo must name them (fleet's is a `kubectl kustomize`
    loop over every `kustomization.yaml`).
 
@@ -46,7 +48,16 @@ EOF
 ${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py labels --kind <kind>
 ```
 
-`labels` calls `gh label list`: it needs `dangerouslyDisableSandbox: true` and a GitHub remote; a
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/new-repo.py github [--project OWNER/NUMBER]
+```
+
+`github` plans branch protection on the default branch (pull requests only, every job of
+`.github/workflows/checks.yaml` required) and the Project link. Run it after `files --yes` has
+written the workflow: before that it has no jobs to require, so on a first run show its plan in
+step 4 instead.
+
+`labels` and `github` call `gh`: they need `dangerouslyDisableSandbox: true` and a GitHub remote; a
 repo with no remote yet skips the labels and says to run this step once it has one.
 
 Show the user both plans as they print: each file with its action (`create`, `merge`, `append`,
@@ -57,16 +68,18 @@ covering:
 - for each `skip — <path> exists`: keep it (the default) or replace it (`--overwrite <path>`) —
   read the existing file and say what replacing it loses before asking;
 - for each label that `exists, differs` (GitHub's default `bug`, typically): keep it or change it
-  (`--update`).
+  (`--update`);
+- the branch protection and the Project link `github` prints.
 
 Nothing is written before that answer.
 
 ## 4. Write
 
-Run the same two commands with `--yes`, plus `--overwrite <path>` for each file the user chose to
-replace and `--update` if they chose to change the differing labels. Both need
-`dangerouslyDisableSandbox: true`: the sandbox denies every write to `.claude/settings.json`, and
-`labels` calls `gh`. A `gh` failure is printed per label: report it and do not retry blindly.
+Run `files` and `labels` with `--yes`, plus `--overwrite <path>` for each file the user chose to
+replace and `--update` if they chose to change the differing labels; then `github --yes` (with
+`--project` if one was named). All three need `dangerouslyDisableSandbox: true`: the sandbox
+denies every write to `.claude/settings.json`, and `labels` and `github` call `gh`. A `gh` failure is printed per call (a private repo on the free
+plan cannot have branch protection: report it, it is not a bug): report it and do not retry blindly.
 
 ## 5. Report
 
@@ -77,6 +90,9 @@ What was written, skipped and created, and what is left to the user:
   `/pipeline:new-reviewer <name>` before the first feature.
 - `security_paths` and `build_definitions` in `.claude/pipeline.json` start empty; SECURITY.md's
   sections start as headings. Both are filled as the repo takes shape.
+- A product repo's CI runs the plugin's not-built check and, for Go surfaces, diff-coverage on pull
+  requests, from the plugin at its release tag (`v<version>`): bump that `ref:` when the plugin
+  releases.
 - The CI workflow sets up only the toolchains of the surfaces it knows; an infrastructure repo's
   may need its tool installed (add a step above *Verify*).
 
