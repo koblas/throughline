@@ -85,6 +85,22 @@ Python and git.
 the current code. No formatter is enforced; please match the surrounding style rather than
 reformatting files you are not otherwise changing.
 
+## Documentation
+
+The documentation site is `mkdocs.yml` plus `docs/`, built by [Zensical](https://zensical.org)
+and published to GitHub Pages from `main` by `.github/workflows/docs.yml`. It needs
+[`uv`](https://docs.astral.sh/uv/):
+
+```
+make docs         # docs/check.py, then the strict build to out/site
+make docs-serve   # preview at http://127.0.0.1:8000
+```
+
+`docs/check.py` fails when a command, agent, skill or `pipeline.json` key in the plugin has no entry
+on its reference page, or a page is missing from the nav. The `docs` check runs `make docs` on every
+PR. How a page is written: `docs/guides/develop/docs.md` and `.claude/rules/docs-voice.md`; with
+Claude Code, `/docs` and `/docs-audit` apply them.
+
 ## Releases
 
 Maintainers only: merge the open `chore(main): release x.y.z` PR that release-please maintains.

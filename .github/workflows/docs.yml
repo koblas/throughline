@@ -1,0 +1,45 @@
+name: "docs"
+
+# Publishes the documentation site (mkdocs.yml, docs/) to GitHub Pages on every push to main that
+# touches it, and by hand. checks.yaml's docs job builds the same site on pull requests. The
+# repository's Pages source must be "GitHub Actions" (Settings > Pages).
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "mkdocs.yml", "Makefile", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # setup-uv publishes full-version tags only, so it is pinned exactly; dependabot bumps it.
+      - uses: astral-sh/setup-uv@v10.3.2
+      - run: make docs
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: out/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5

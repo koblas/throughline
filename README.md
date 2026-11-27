@@ -111,6 +111,9 @@ The tests need only Python and `git`: every toolchain they touch is faked
 (`plugins/pipeline/tests/fakes.py`). CI runs the whole suite on Python 3.12–3.15, plus `ruff check` and
 `claude plugin validate .` (`.github/workflows/checks.yaml`). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The documentation site, <https://koblas.github.io/throughline/>, is built from `mkdocs.yml` and
+`docs/` with `make docs` (needs [`uv`](https://docs.astral.sh/uv/)).
+
 ## License
 
 [MIT](LICENSE)
