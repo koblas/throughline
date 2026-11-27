@@ -96,7 +96,8 @@ Skills are files: `Read` each **once** at start, not per step — the plugin's (
      again — fix it, or leave it while batch mid-way (interface method before its adapters;
      compile errors while Acceptance stubs missing). Silence not proof — phase check below is
      authority. At phase boundary run narrow loop as
-     `${CLAUDE_PLUGIN_ROOT}/scripts/check.py phase --go <pkgs> --run '<pattern>'` or `--ts <workspace> --filter <f>`:
+     `${CLAUDE_PLUGIN_ROOT}/scripts/check.py phase --go <pkgs> --run '<pattern>'` or `--ts <workspace> --filter <f>`
+     (a surface in a repo-supplied language: `--surface <name> <changed files…>`):
      one line per check, failures in full (capped at 50 lines).
    - **Sweep** — `${CLAUDE_PLUGIN_ROOT}/scripts/check.py phase` on touched packages (build, `golangci-lint`, tests;
      `tsc` + eslint for frontend; plus the checks on what this scenario changed — doc budget,

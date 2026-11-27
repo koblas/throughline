@@ -24,11 +24,16 @@ Three modes:
   phase  Run once at a phase boundary instead of hand-typed build/lint/test commands:
            scripts/check.py phase --go ./services/core/todo/ [--run 'Pattern']
            scripts/check.py phase --ts <workspace> [--filter todo.test]
+           scripts/check.py phase --surface <name> <changed files…>   (a repo-supplied language)
          Go: `go build ./...`, `go mod tidy -diff`, `golangci-lint run` on the packages, the
          doc-comment budget on exported symbols the working tree changed (about 4 lines), `time.Sleep` on changed lines of a test file that is not in a
          `testing/synctest` bubble (a real sleep is a flake with a timer; inside a bubble it is the
          idiom), absence-only tests, `go test` on the packages.
          TS: `tsc -b --noEmit`, eslint on the workspace, absence-only tests, vitest on the workspace.
+         A surface in a repo-supplied language (`--surface`): its adapter's `absence`, its `phase` steps
+         (with `{files}` and `{report}`), and after a passing `test` step its adapter's `coverage`
+         (`scripts/adapters.py`). An operation the adapter does not offer prints `skipped`; an adapter
+         that fails fails the phase.
          Then the surface's own `phase` steps from .claude/pipeline.json, in order: a repo's own
          checks (a ratchet, a parity check between two files) are steps there, and `{base}` and
          `{to}` give a step the same base and working-tree snapshot as the diff checks above.

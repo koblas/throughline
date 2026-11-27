@@ -474,7 +474,11 @@ def main() -> int:
         except pc.ConfigError as why:
             print(f"mutation-sample: {why}", file=sys.stderr)
             return 2
-        args.frontend = surface.language == "ts"
+        if surface.kind == "script":  # protocol 1 has no mutation operation: say so, never sample as Go
+            print(f"mutation-sample: skipped (the `{surface.name}` surface's language, `{surface.language}`, is "
+                  "supplied by the repo's adapter, and the adapter protocol has no mutation sampling)")
+            return 0
+        args.frontend = surface.kind == "ts"
     if args.repair or args.frontend:  # the Go path never writes the tree, and must not disturb a live frontend run
         if (pid := sample_running(root)) and args.frontend:
             print(f"mutation-sample: another frontend sample (pid {pid}) is mutating this tree — no frontend sample")
