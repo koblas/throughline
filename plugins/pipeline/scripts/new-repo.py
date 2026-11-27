@@ -99,6 +99,14 @@ def command(text: str, where: str) -> list[str]:
     return shlex.split(text)
 
 
+def phase_test(lang: str, given: list[str]) -> list[str]:
+    """The `phase` test step. For Go it is the packages `check.py phase` names, with `{cover}`, so the
+    diff-coverage check has a profile to read; the answer's own command stays the full gate."""
+    if lang == "go":
+        return ["go", "test", "-count=1", "{cover}", "{packages}", "{run}"]
+    return given
+
+
 def surface(name: str, raw: dict) -> dict:
     at = f"surfaces.{name}"
     if not isinstance(raw, dict):
@@ -119,7 +127,7 @@ def surface(name: str, raw: dict) -> dict:
         "reviewers": dict(p["reviewers"]),
         "covers": dict(p["covers"]),
         "phase": [{"name": "build", "command": command(raw.get("build"), f"{at}.build")},
-                  {"name": "test", "command": command(raw.get("test"), f"{at}.test")}],
+                  {"name": "test", "command": phase_test(lang, command(raw.get("test"), f"{at}.test"))}],
         "full_gates": [{"name": f"{name} {step}", "command": command(raw.get(step), f"{at}.{step}")}
                        for step in ("build", "test")],
     }
