@@ -45,7 +45,7 @@ A specification carries `<!-- spec-check: v4 -->`; one without it fails.
   9. The approval record: when every check of an `--approval` run passes, it writes
         **Approved**: <YYYY-MM-DD> scenarios <digest>
      as the last line of `## Intent and out of scope` (replacing an older one). The digest is of
-     the `## Scenarios` section without the `Issue:` and `Acceptance test:` lines the pipeline adds
+     the `## Scenarios` section without the `Issue:`, `Acceptance test:` and `Folded into:` lines the pipeline adds
      later (`scenario_digest`). `pipeline.py open-issues` and a build's first `pipeline.py next`
      refuse a spec with no such line, or whose scenarios changed since it was written
      (`approval_problems`). Never write the line by hand.
@@ -386,7 +386,7 @@ def cited_path_problems(root: Path, text: str, tracked: list[str]) -> list[str]:
 
 APPROVED_RE = re.compile(r"^\*\*Approved\*\*:\s*(\d{4}-\d{2}-\d{2})\s+scenarios\s+([0-9a-f]{16})\s*$", re.M)
 # Lines the pipeline itself writes into a scenario block after approval: they are not what was approved.
-AFTER_APPROVAL_RE = re.compile(r"^(?:Issue|Acceptance test):")
+AFTER_APPROVAL_RE = re.compile(r"^(?:Issue|Acceptance test|Folded into):")
 
 
 def scenario_digest(text: str) -> str:

@@ -236,6 +236,28 @@ class NextTest(Feature):
         self.assertIn("Ask the user", out)
         self.assertFalse((pl.runs_of(self.spec_dir) / "PIPELINE.json").exists())  # nothing decided for them
 
+    def test_a_fold_is_written_into_the_spec_and_leaves_its_approval_standing(self):
+        before = pl.spec_check().scenario_digest(self.spec.read_text())
+        self.next()
+
+        self.run_cli("fold", "demo", "SCENARIO-01", "SCENARIO-02")
+
+        block = next(b for b in pl.scenario_blocks(self.spec.read_text()) if b["id"] == "SCENARIO-01")
+        self.assertEqual(block["folded_into"], "SCENARIO-02")
+        self.assertEqual(pl.spec_check().scenario_digest(self.spec.read_text()), before)
+
+    def test_a_folded_scenario_whose_issue_its_absorbers_pr_closed_is_not_a_disagreement(self):
+        self.next()
+        self.run_cli("fold", "demo", "SCENARIO-01", "SCENARIO-02")
+        self.tick("SCENARIO-02")
+        self.states[ISSUE["SCENARIO-01"]] = "CLOSED"  # `Closes #N` on the absorber's PR; no line of its own
+        (pl.runs_of(self.spec_dir) / "PIPELINE.json").unlink()  # a fresh cursor: a new worktree
+
+        _, out = self.next()
+
+        self.assertNotIn("disagree", out)
+        self.assertEqual(self.state()["scenarios"]["SCENARIO-01"]["folded_into"], "SCENARIO-02")
+
     def test_a_written_scenario_whose_sub_issue_is_still_open_is_finished_again_not_stopped(self):
         self.tick("SCENARIO-01")
         self.states[ISSUE["SCENARIO-01"]] = "OPEN"  # its PR has not merged: the normal state mid-feature

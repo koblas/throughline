@@ -181,20 +181,22 @@ def load_profile(path: Path) -> dict:
     return profile if isinstance(profile, dict) else {}
 
 
-def debt_tool() -> str:
+def debt_tools() -> list[str]:
     """The one pipeline command every headless run may call on its own: drafting a debt it found
-    (`pipeline.py debt`), by the absolute path its brief names. The draft goes to the git common
-    directory (`pipeline.drafts_root()`), which `run_profile` opens for writing."""
-    return f"Bash({cfg.script('pipeline.py')} debt *)"
+    (`pipeline.py debt`), by the absolute path every brief spells out (`pipeline.brief_head`), run as
+    the script or through `python3`. The draft goes to the git common directory
+    (`pipeline.drafts_root()`), which `run_profile` opens for writing."""
+    path = cfg.script("pipeline.py")
+    return [f"Bash({path} debt *)", f"Bash(python3 {path} debt *)"]
 
 
 def tool_lists(root: Path) -> tuple[list[str], list[str]]:
     """The profile's tool lists: pre-approved for every headless run (an agent's own `tools:` list still
     limits what it has), and denied to every run (an unattended run never publishes anything). Every
-    run may also draft a debt (`debt_tool()`), so found work is never lost for want of a permission."""
+    run may also draft a debt (`debt_tools()`), so found work is never lost for want of a permission."""
     perms = load_profile(profile_path(root)).get("permissions") or {}
     allowed = list(perms.get("allow") or [])
-    return allowed + ([debt_tool()] if debt_tool() not in allowed else []), list(perms.get("deny") or [])
+    return allowed + [t for t in debt_tools() if t not in allowed], list(perms.get("deny") or [])
 
 
 def runner_settings(root: Path) -> dict:

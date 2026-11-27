@@ -79,6 +79,28 @@ class DraftsTest(unittest.TestCase):
 
         self.assertEqual((code, path.read_text()), (2, before))
 
+    def test_a_draft_the_user_declines_is_dropped_and_not_filed(self):
+        debt(self.root, "Retry the webhook on a 502")
+        debt(self.root, "Drop the dead helper")
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = pl.run(pl.build_parser().parse_args(["file-issues", "demo", "--drop", "Drop the dead helper"]),
+                          self.root)
+
+        self.assertEqual(code, 0)
+        self.assertIn("dropped `Drop the dead helper`", out.getvalue())
+        self.assertEqual(self.titles(self.root), ["Retry the webhook on a 502"])
+
+    def test_dropping_a_title_that_is_not_drafted_says_so(self):
+        debt(self.root, "Drop the dead helper")
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            code = pl.drop_drafts(self.root, "demo", ["Drop the dead"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("no open draft titled `Drop the dead`", err.getvalue())
+        self.assertEqual(self.titles(self.root), ["Drop the dead helper"])
+
     def test_a_file_an_older_version_left_in_runs_is_moved_on_first_look(self):
         old = self.root / ".runs" / "demo" / "ISSUES.md"
         old.parent.mkdir(parents=True)

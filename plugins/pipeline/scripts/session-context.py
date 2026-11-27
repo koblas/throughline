@@ -75,7 +75,7 @@ def unfiled(root: Path, drafts_dir: str) -> str:
         return ""
     return ("\n## Unfiled issue drafts\n\nFound work waiting for the user's yes. Mention it once, early: list a "
             f"feature's drafts with `{HERE / 'pipeline.py'} file-issues <slug>` and file them only on their yes "
-            "(`--yes`).\n\n" + "\n".join(found) + "\n")
+            "(`--yes`); one they decline is removed with `--drop \"<title>\"`.\n\n" + "\n".join(found) + "\n")
 
 
 def context(cwd: Path) -> str:

@@ -59,7 +59,14 @@ The scripts read their config from the repo they run in, never from beside thems
   there. The work is done in the session, and `/pipeline:retro <slug>` writes a Full-lane feature's
   retro from its merged PRs. Everything that reads `surfaces` (the per-edit hook and lock,
   `diff-coverage.py`, `not-built.py`) works the same in both modes.
+  Its optional `"runner": {"file_issues": true}` lets the unattended runner file a finished
+  feature's issue drafts itself; without it they wait for a person.
 - `.claude/runner-settings.json` — the unattended runner's permission profile.
+
+Issue drafts (debt and review findings below MAJOR) are kept in the git common directory,
+`<git-common-dir>/pipeline/<slug>/ISSUES.md`, outside every worktree, so removing a worktree never
+loses them. Every session start lists the unfiled ones; `pipeline.py file-issues <slug>` lists a
+feature's drafts, `--yes` files them and `--drop "<title>"` discards one.
 
 `plugins/pipeline/tests/fixtures/` holds a full example of both.
 

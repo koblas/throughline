@@ -223,6 +223,16 @@ class RunnerTest(tp.Feature):
         self.assertEqual(len(pl.open_drafts(self.spec_dir)), 1)
         self.assertTrue(any("1 issue draft(s) wait for a person" in line for line in self.said), self.said)
 
+    def test_the_debt_command_a_brief_spells_out_is_one_every_run_may_call(self):
+        self.go()
+
+        build = next(c for c in self.calls if "run: build" in c["prompt"])
+        brief = Path(re.search(r"Brief: (\S+)", build["prompt"]).group(1)).read_text()
+        command = re.search(r"`(\S+/pipeline\.py debt demo [^`]+)`", brief).group(1)
+        allowed, _ = rn.tool_lists(self.root)
+        prefixes = [t[len("Bash("):-len(" *)")] for t in allowed if t.startswith("Bash(") and t.endswith(" *)")]
+        self.assertTrue(any(command.startswith(p + " ") for p in prefixes), (command, rn.debt_tools()))
+
     def test_a_file_issues_setting_that_is_not_a_boolean_is_refused(self):
         self.drafted(file_issues="yes")
 
@@ -256,7 +266,7 @@ class RunnerTest(tp.Feature):
         profile = json.loads(rn.profile_path(self.root).read_text())["permissions"]
         allowed, denied = rn.tool_lists(self.root)
 
-        self.assertEqual((allowed, denied), (profile["allow"] + [rn.debt_tool()], profile["deny"]))
+        self.assertEqual((allowed, denied), (profile["allow"] + rn.debt_tools(), profile["deny"]))
         self.assertIn("Bash(go *)", allowed)
         r = self.runner()
         r.run()
