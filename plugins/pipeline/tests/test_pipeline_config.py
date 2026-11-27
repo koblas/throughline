@@ -70,6 +70,32 @@ class ValidationTest(unittest.TestCase):
         self.assertIn("`surfaces.go.lint.command` is missing", why)
         self.assertIn(str(self.root / ".claude" / "pipeline.json"), why)
 
+    def test_a_briefs_entry_that_is_not_a_list_of_names_is_refused(self):
+        config = repo_fixture.content_buddy() | {"briefs": {"architect": "navigation.md"}}
+
+        self.assertIn("`briefs.architect` must be a list of strings", self.refusal(config))
+
+    def test_the_briefs_map_gives_each_agent_what_the_plugin_once_hardcoded(self):
+        # The lists `pipeline.py` kept by content_buddy's agent names until the `briefs` map replaced them.
+        hardcoded = {"pipeline:test-reviewer": ["proof.md", "storage.md"], "ui-test-reviewer": ["proof.md"],
+                     "correctness-reviewer": ["proof.md", "storage.md", "navigation.md"],
+                     "arch-reviewer": ["navigation.md"], "ts-correctness-reviewer": [], "architect": ["navigation.md"]}
+        repo_fixture.install(self.root, profile=False)
+        c = pc.load(self.root)
+
+        self.assertEqual({name: pl.extra_briefs(c, name) for name in hardcoded}, hardcoded)
+
+    def test_without_a_briefs_map_only_a_surfaces_test_reviewer_reads_proof(self):
+        config = repo_fixture.content_buddy()
+        del config["briefs"]
+        repo_fixture.install(self.root, config, profile=False)
+        c = pc.load(self.root)
+
+        self.assertEqual(pl.extra_briefs(c, "pipeline:test-reviewer"), ["proof.md"])
+        self.assertEqual(pl.extra_briefs(c, "ui-test-reviewer"), ["proof.md"])
+        self.assertEqual(pl.extra_briefs(c, "correctness-reviewer"), [])
+        self.assertEqual(pl.extra_briefs(c, "architect"), [])
+
     def test_a_missing_top_level_key_and_a_wrong_shape_are_named(self):
         config = repo_fixture.content_buddy()
         del config["feature_budget_usd"]

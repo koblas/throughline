@@ -15,6 +15,13 @@
     }
   },
   "test_support_paths": "/src/test/",
+  "briefs": {
+    "test-reviewer": ["proof.md", "storage.md"],
+    "ui-test-reviewer": ["proof.md"],
+    "correctness-reviewer": ["proof.md", "storage.md", "navigation.md"],
+    "arch-reviewer": ["navigation.md"],
+    "architect": ["navigation.md"]
+  },
   "generated_roots": ["go/gen/", "papi/", "frontend/packages/genapi/"],
   "top_dirs": ["go", "frontend", "protos", "papi", "docs", "aws-pulumi", ".claude"],
   "copy_sources": {
