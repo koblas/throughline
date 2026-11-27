@@ -1198,6 +1198,9 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     if not path.is_file() or not V4_RE.search(text := path.read_text()):
         print(f"open-issues: {path} is not a specification (`<!-- spec-check: v4 -->`)", file=sys.stderr)
         return 2
+    if unapproved := spec_check().approval_problems(text):
+        print(f"open-issues: {unapproved_why(slug, unapproved)}", file=sys.stderr)
+        return 2
     found, missing = spec_check().area_files(root, text)
     areas = [f"area:{p.stem}" for p in found] + [f"area:{Path(m).stem}" for m in missing]
     title = re.sub(r"^#\s*(?:Specification|Feature):\s*", "", next((l for l in text.splitlines() if l.startswith("# ")), f"# {slug}"))
@@ -1395,6 +1398,12 @@ def conditions(root: Path, lines: list[str] | None = None) -> tuple[list[tuple[s
     return found, problems
 
 
+def unapproved_why(slug: str, problems: list[str]) -> str:
+    """The refusal for a spec that never passed `spec-check --approval`, or whose scenarios changed since."""
+    return ("the specification is not approved — " + "; ".join(problems) + f". Run `{script('spec-check.py')} --approval "
+            f"{slug}` once the user has approved these scenarios (`{here('commands/intent-and-goal.md')}` → *Phase 4*)")
+
+
 def kickoff_problems(text: str, root: Path) -> list[str]:
     """Why a specification is not ready to build: what the kickoff pause was meant to settle is not in it.
 
@@ -1468,6 +1477,8 @@ def load_state(spec_dir: Path) -> dict:
         raise Refuse("the specification is not ready to build — the kickoff pause was skipped or not recorded:\n- "
                      + "\n- ".join(missing) + "\nPut the kickoff to the user and write their answers in "
                      f"(`{here('commands/intent-and-goal.md')}` → *Phase 1*). Do not fill these in for them")
+    if fresh and (unapproved := spec_check().approval_problems(text)):
+        raise Refuse(unapproved_why(spec_dir.name, unapproved))
     if fresh and (unopened := [b["id"] for b in scenario_blocks(text) if not isinstance(b["issue"], int)]):
         raise Refuse(f"{', '.join(unopened)} {'has' if len(unopened) == 1 else 'have'} no sub-issue — the approved "
                      f"spec's issues are opened before the build: `{script('pipeline.py')} open-issues {spec_dir.name}` "

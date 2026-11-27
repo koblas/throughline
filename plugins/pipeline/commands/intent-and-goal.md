@@ -202,12 +202,18 @@ choices. Also create an empty `.runs/<slug>/METRICS.md` from the template in
 Then, in order:
 
 1. `${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py --approval <slug>` — the format, the tables, every cited path, every `error`
-   row's outcome, and **copy coverage**: each quoted string and wire code an `error` row names, and
-   all four states of each `**Screens**:` screen, are in the area file (its docstring, check 8).
+   row's outcome, every symbol cited beside its file (`path` `Name` or `path:Name`), and **copy
+   coverage**: each quoted string and wire code an `error` row names, and all four states of each
+   `**Screens**:` screen, are in the area file (its docstring, check 8).
    If one fails the spec is not done. A wrong citation is a fact: fix it and re-run. Copy the area
    file does not rule goes back to Phase 2 for that string only; an `error` row that names no
    outcome changes what the user approved: put the proposed ruling for those rows only to the user —
    part of the approval pause, not a new one.
+   When every check passes it writes the approval record, `**Approved**: <date> scenarios <digest>`,
+   as the last line of `## Intent and out of scope` (check 9). It is part of the spec file; never
+   write or edit it by hand. `open-issues` and the build's first `next` refuse a spec without it, or one
+   whose scenarios changed since it was written: a change to approved scenarios goes back to the
+   user, and only on their yes is `--approval` re-run.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py open-issues <slug>` lists the feature issue, the triage comment and the
    sub-issues; `open-issues <slug> --yes` (the approval covers it) creates them, links each sub-issue
    under the feature issue and writes the numbers into the spec. It is resumable: rerun it after a

@@ -30,8 +30,9 @@ triage straight to scenarios and into a build nobody had been asked about.
 3. **`product-vision`** (Full lane only) writes the surface-and-copy ruling into `docs/product/<area>.md` (no
    verdict: a concern it raises goes to the user with the scenarios), then scenarios approved → **one `architect` sizing pass** over the whole list (seams, FOLD and
    split verdicts, `Size: large|small` per scenario; `briefs/build.md` → *Sizing*, *Small
-   scenarios*) → `docs/specs/<slug>.md` written with those applied → `spec-check --approval` →
-   `pipeline.py open-issues <slug> --yes` (the approval covers it). Paste
+   scenarios*) → `docs/specs/<slug>.md` written with those applied → `spec-check --approval` (on
+   success it writes the spec's `**Approved**:` line; `open-issues` and the first `next` refuse
+   without it) → `pipeline.py open-issues <slug> --yes` (the approval covers it). Paste
    `scripts/feature-metrics.py --scenario-p90` into the sizing prompt.
 
 If the user chose the unattended build at the kickoff, the issues being open is where this

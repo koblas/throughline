@@ -17,6 +17,8 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("pipeline_oi", HERE.parent / "scripts" / "pipeline.py")
 pl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pl)
+# The spec as `spec-check.py --approval` leaves it: issues are opened only for an approved spec.
+APPROVED = pl.spec_check().stamped(SPEC, "2026-11-25")
 
 # A fake `gh`: logs its argv, one line a call (newlines as `|`); `issue create` prints the next issue URL (or fails / prints nothing for the
 # titles in $GH_FAIL_TITLE / $GH_SILENT_TITLE); `api …/issues/N` prints an id; the sub_issues POST fails
@@ -57,7 +59,7 @@ class OpenIssuesTest(unittest.TestCase):
         (self.root / "docs" / "product").mkdir(parents=True)
         (self.root / "docs" / "product" / "sharing.md").write_text(AREA)
         self.spec = self.root / "docs" / "specs" / "demo.md"
-        self.spec.write_text(SPEC)
+        self.spec.write_text(APPROVED)
         (self.root / ".runs" / "demo").mkdir(parents=True)
         (self.root / ".runs" / "demo" / "triage.md").write_text(TRIAGE)
 
@@ -168,7 +170,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual((code, out), (0, "open-issues `demo`: nothing to open\n"))
 
     def test_a_spec_with_no_area_opens_issues_with_no_area_label(self):
-        self.spec.write_text(SPEC.replace("**Area**: sharing", "**Area**: none"))
+        self.spec.write_text(APPROVED.replace("**Area**: sharing", "**Area**: none"))
 
         _, out, _ = self.run_open(yes=False)
         code, _, err = self.run_open()
@@ -186,6 +188,39 @@ class OpenIssuesTest(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertIn("is not a specification (`<!-- spec-check: v4 -->`)", err)
+
+    def test_a_spec_that_never_passed_approval_is_not_opened_or_listed(self):
+        self.spec.write_text(SPEC)
+
+        for yes in (False, True):
+            with self.subTest(yes=yes):
+                code, out, err = self.run_open(yes=yes)
+
+                self.assertEqual(code, 2)
+                self.assertIn("the specification is not approved", err)
+                self.assertIn("spec-check.py --approval demo", err)
+                self.assertEqual(out, "")
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.spec.read_text(), SPEC)
+
+    def test_a_spec_whose_scenarios_changed_since_approval_is_not_opened(self):
+        self.spec.write_text(APPROVED.replace("a viewer tries", "an editor tries"))
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 2)
+        self.assertIn("the scenarios changed since they were approved on 2026-11-25", err)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_run_cut_off_part_way_resumes_on_the_same_approval(self):
+        os.environ["GH_FAIL_TITLE"] = "Owner stops sharing"
+        self.run_open()
+        os.environ["GH_FAIL_TITLE"] = ""
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Issue: #3", self.spec.read_text())
 
     def body(self, create: str) -> list[str]:
         """An `issue create` call's body, one line per part (the fake gh logs newlines as `|`)."""
@@ -209,7 +244,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual([l.split(":", 1)[0] for l in first], ["Why", "Design", "State", "Approach", "Done when"])
 
     def test_a_spec_with_no_primary_goal_line_takes_why_from_the_intent_sections_first_line(self):
-        self.spec.write_text(SPEC.replace("**Primary goal**: an owner shares one task with one member.",
+        self.spec.write_text(APPROVED.replace("**Primary goal**: an owner shares one task with one member.",
                                           "Owners cannot share a task with anyone today."))
 
         self.run_open()
@@ -217,7 +252,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual(self.body(self.creates()[0])[0], "Why: not possible yet — Owners cannot share a task with anyone today.")
 
     def test_a_scenario_with_no_action_takes_why_from_its_title_alone(self):
-        self.spec.write_text(SPEC.replace("Action: `SharingService.Unshare`\n", ""))
+        self.spec.write_text(pl.spec_check().stamped(SPEC.replace("Action: `SharingService.Unshare`\n", ""), "2026-11-25"))
 
         self.run_open()
 

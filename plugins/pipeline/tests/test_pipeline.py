@@ -75,6 +75,9 @@ Issue: #3
 
 - Feature issue: #1
 """
+UNAPPROVED = SPEC
+# As `spec-check.py --approval` leaves it: a build begins only from an approved spec.
+SPEC = pl.spec_check().stamped(UNAPPROVED, "2026-11-25")
 # The acceptance test each scenario's `Acceptance test:` line names once it is built.
 ACCEPTANCE = {"SCENARIO-01": "`go/a_test.go` `Test_first`", "SCENARIO-02": "`go/b_test.go` `Test_second`"}
 ISSUE = {"SCENARIO-01": 2, "SCENARIO-02": 3}
@@ -992,6 +995,32 @@ class KickoffTest(Feature):
 
         self.assertEqual(code, 2)
         self.assertIn("no `<!-- spec-check: v4 -->` marker", out)
+
+    def test_a_specification_that_never_passed_approval_is_refused(self):
+        self.spec.write_text(UNAPPROVED)
+
+        code, out = self.next()
+
+        self.assertEqual(code, 2)
+        self.assertIn("the specification is not approved", out)
+        self.assertIn("spec-check.py --approval demo", out)
+        self.assertFalse((pl.runs_of(self.spec_dir) / pl.STATE_FILE).exists())
+
+    def test_a_specification_whose_scenarios_changed_since_approval_is_refused(self):
+        self.respec("| 01.2 | error | a bad thing | it refuses |", "| 01.2 | error | a worse thing | it refuses |")
+
+        code, out = self.next()
+
+        self.assertEqual(code, 2)
+        self.assertIn("the scenarios changed since they were approved on 2026-11-25", out)
+
+    def test_a_build_already_under_way_is_not_held_to_the_approval_record(self):
+        self.assertEqual(self.next()[0], 0)
+        self.spec.write_text(UNAPPROVED)
+
+        code, out = self.next()
+
+        self.assertNotIn("not approved", out)
 
     def test_a_default_condition_the_pipeline_cannot_read_is_reported(self):
         _, problems = pl.conditions(self.root, ["gate_rounds <= 2", "happiness >= 9", "the code should be nice", "dev_runs_max <= 1.2.3"])

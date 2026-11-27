@@ -6,7 +6,9 @@ import unittest
 from unittest import mock
 
 from test_pipeline import Feature, pl
-from v4_fixture import AREA, SPEC, with_issues
+from v4_fixture import AREA, SPEC as UNAPPROVED, with_issues
+
+SPEC = pl.spec_check().stamped(UNAPPROVED, "2026-11-25")  # as `spec-check.py --approval` leaves it
 
 
 class V4Feature(Feature):

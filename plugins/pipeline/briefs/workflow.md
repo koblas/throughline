@@ -70,7 +70,8 @@ repo whose `.claude/pipeline.json` sets `"mode": "single-session"`, it leaves ou
   asked. Everything after approval auto-continues — do not ask permission between steps. Both
   are load-bearing precisely because pipeline starts implicitly: never draft scenarios without
   the kickoff answered, never write spec file from offhand request without approval.
-  `scripts/pipeline.py next` refuses a spec that lacks the kickoff's answers.
+  `scripts/pipeline.py next` refuses a spec that lacks the kickoff's answers, and `next` and
+  `open-issues` refuse one that never passed `spec-check --approval` (its `**Approved**:` line).
 <!-- /pipeline-only -->
 
 - **Every production change is tested — nothing ships untested.** Each scenario starts with

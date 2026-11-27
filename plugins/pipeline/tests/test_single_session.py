@@ -16,6 +16,9 @@ SCRIPTS = PLUGIN / "scripts"
 loader = importlib.util.spec_from_file_location("pipeline_config_ss", SCRIPTS / "pipeline_config.py")
 pc = importlib.util.module_from_spec(loader)
 loader.loader.exec_module(pc)
+sc_loader = importlib.util.spec_from_file_location("spec_check_ss", SCRIPTS / "spec-check.py")
+sc = importlib.util.module_from_spec(sc_loader)
+sc_loader.loader.exec_module(sc)
 
 
 def configured(mode: str | None) -> dict:
@@ -150,7 +153,7 @@ class RefusalTest(Repo):
     def setUp(self):
         super().setUp()
         (self.root / "docs" / "specs").mkdir(parents=True)
-        (self.root / "docs" / "specs" / "demo.md").write_text(with_issues(SPEC))
+        (self.root / "docs" / "specs" / "demo.md").write_text(with_issues(sc.stamped(SPEC, "2026-11-25")))
 
     def test_next_refuses_in_one_line_naming_the_mode_and_writes_no_run_output(self):
         self.install("single-session")
