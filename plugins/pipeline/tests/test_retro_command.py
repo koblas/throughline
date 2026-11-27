@@ -160,6 +160,26 @@ class RetroCommandTest(unittest.TestCase):
         self.assertNotIn("skipped", stats.stderr)
         self.assertIn("| untested-guard | 1 | 1 | 0 |", stats.stdout)
 
+    def earlier_full_lane_features(self, n):
+        for i in range(n):
+            (self.root / "docs" / "specs" / f"f{i}.md").write_text(SPEC)
+            (self.root / "docs" / "specs" / f"f{i}.retro.md").write_text(REPLY.replace("# Retro: demo", f"# Retro: f{i}"))
+
+    def test_the_fifth_full_lane_retro_says_a_process_review_is_due(self):
+        self.earlier_full_lane_features(4)
+
+        out = self.retro_cmd("--reply", str(self.reply))
+
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("process review is due: 5 Full-lane retros", out.stdout)
+
+    def test_the_fourth_says_nothing_of_a_review(self):
+        self.earlier_full_lane_features(3)
+
+        out = self.retro_cmd("--reply", str(self.reply))
+
+        self.assertNotIn("process review", out.stdout)
+
     def test_a_cost_section_the_reviewer_filled_is_replaced_when_there_is_no_ledger(self):
         self.reply.write_text(REPLY.replace("## Cost by stage\n", "## Cost by stage\n| Stage | k | % |\n| build | 9 | 100 |\n"))
 

@@ -301,7 +301,8 @@ class TwoRootsTest(unittest.TestCase):
 
         self.assertEqual(race.returncode, 0, race.stderr)
         self.assertIn("+ (cd . && go test -race -count=1 -timeout 20m ./internal/x/)", race.stdout)
-        self.assertEqual((spec.returncode, spec.stdout.strip()), (0, "spec-check: demo OK"), spec.stderr)
+        self.assertEqual((spec.returncode, spec.stdout.splitlines()[0]), (0, "spec-check: demo OK"), spec.stderr)
+        self.assertIn("**Approved**: ", (repo / "docs" / "specs" / "demo.md").read_text())  # the approval is on file
 
     def test_a_repo_without_a_config_refuses_and_names_it(self):
         (self.repo / ".claude" / "pipeline.json").unlink()

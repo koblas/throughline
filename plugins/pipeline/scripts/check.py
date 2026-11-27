@@ -14,27 +14,28 @@ Three modes:
          anything it cannot read, lets the edit through.
 
   hook   PostToolUse hook on Edit|Write|MultiEdit (wired in the plugin's hooks/hooks.json). Reads the
-         hook JSON on stdin. A Go file (outside go/gen/) is gofmt'd in place and its package
-         vetted (`go vet` compiles tests too); a TS/TSX file under frontend/ is prettier'd in
-         place. A docs/product/*.md file has its not-built marks checked offline (each names
+         hook JSON on stdin. A file one of the repo config's surfaces formats (its `format`
+         include globs and steps, .claude/pipeline.json — gofmt + `go vet` for Go, say, prettier
+         for TS) is formatted in place by that surface's steps. A docs/product/*.md file has its not-built marks checked offline (each names
          an issue; `scripts/not-built.py --offline`). Silent on success. On failure: exit 2 with at most 50 lines on stderr, which
          Claude Code feeds back to the agent that made the edit. A missing tool (go, npx) is
          reported the same way, once per session, so silence never means "did not run".
 
   phase  Run once at a phase boundary instead of hand-typed build/lint/test commands:
            scripts/check.py phase --go ./services/core/todo/ [--run 'Pattern']
-           scripts/check.py phase --ts app [--filter todo.test]
+           scripts/check.py phase --ts <workspace> [--filter todo.test]
          Go: `go build ./...`, `go mod tidy -diff`, `golangci-lint run` on the packages, the
-         doc-comment budget on exported symbols the working tree changed (`.claude/rules/go-code.md`:
-         about 4 lines), `time.Sleep` on changed lines of a test file that is not in a
+         doc-comment budget on exported symbols the working tree changed (about 4 lines), `time.Sleep` on changed lines of a test file that is not in a
          `testing/synctest` bubble (a real sleep is a flake with a timer; inside a bubble it is the
          idiom), absence-only tests, `go test` on the packages.
          TS: `tsc -b --noEmit`, eslint on the workspace, absence-only tests, vitest on the workspace.
-         Both: the wire reasons documented on `api.v1.Error.reason` in protos/api/v1/error.proto
-         and the TS `ErrorReason` union in frontend/packages/shared/src/errors.ts name the same set
-         (less REASON_DRIFT, the pairs that already differed when the check was added).
-         Go: the error allowlist between the `# error-allowlist` markers of go/.golangci.yaml
-         gained no entry since the base — it only shrinks (`.claude/rules/errors.md`).
+         Both, when the repo config sets `checks.reason_parity`: the wire reasons documented on
+         `api.v1.Error.reason` in its `proto` file and the TS `ErrorReason` union in its `union`
+         file name the same set (less its `drift`, the pairs that already differed when the check
+         was added).
+         Go, when the repo config sets `checks.error_allowlist`: the error allowlist between the
+         `# error-allowlist` markers of that golangci config gained no entry since the base — it
+         only shrinks (the repo's `checks.error_rules`, when it names one).
          "Changed" means against the pending run's base (`scenario_base`): the scenario's
          pre-snapshot for a build run or a checkpoint fix, the pre-fix snapshot for a gate fix,
          else HEAD. Absence-only: `scripts/absence-only.py` on the tests changed since that base;
@@ -687,7 +688,7 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("phase")
     p.add_argument("--go", nargs="+", metavar="PKG", help="Go packages, relative to the Go surface root (./services/x/)")
     p.add_argument("--run", help="go test -run pattern")
-    p.add_argument("--ts", metavar="WORKSPACE", help="workspace of the ts surface (here: app, auth, shared, oidc-client)")
+    p.add_argument("--ts", metavar="WORKSPACE", help="workspace of the ts surface (one of its `workspaces` in .claude/pipeline.json)")
     p.add_argument("--filter", help="vitest file filter")
     p.add_argument("--base", help="the revision \"changed\" is judged against (default: the pending run's base)")
     return ap

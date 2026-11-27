@@ -17,6 +17,8 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("pipeline_oi", HERE.parent / "scripts" / "pipeline.py")
 pl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pl)
+# The spec as `spec-check.py --approval` leaves it: issues are opened only for an approved spec.
+APPROVED = pl.spec_check().stamped(SPEC, "2026-11-25")
 
 # A fake `gh`: logs its argv, one line a call (newlines as `|`); `issue create` prints the next issue URL (or fails / prints nothing for the
 # titles in $GH_FAIL_TITLE / $GH_SILENT_TITLE); `api …/issues/N` prints an id; the sub_issues POST fails
@@ -32,6 +34,7 @@ case "$1 $2" in
     n=$(( $(cat "$GH_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$GH_COUNT"
     echo "https://github.com/o/r/issues/$n" ;;
   "issue comment") exit 0 ;;
+  "issue edit") [ -n "$GH_EDIT_FAIL" ] && { echo "HTTP 404" >&2; exit 1; }; exit 0 ;;
   "api -X") [ -n "$GH_LINK_FAIL" ] && { echo "HTTP 422" >&2; exit 1; }; exit 0 ;;
   "api "*) echo "$2" | sed 's#.*/##; s#^#900#' ;;
 esac
@@ -48,7 +51,8 @@ class OpenIssuesTest(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.log = self.dir / "gh.log"
         env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GH_LOG": str(self.log),
-               "GH_COUNT": str(self.dir / "count"), "GH_FAIL_TITLE": "", "GH_SILENT_TITLE": "", "GH_LINK_FAIL": ""}
+               "GH_COUNT": str(self.dir / "count"), "GH_FAIL_TITLE": "", "GH_SILENT_TITLE": "", "GH_LINK_FAIL": "",
+               "GH_EDIT_FAIL": ""}
         self.old_env = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.root = self.dir / "repo"
@@ -57,7 +61,7 @@ class OpenIssuesTest(unittest.TestCase):
         (self.root / "docs" / "product").mkdir(parents=True)
         (self.root / "docs" / "product" / "sharing.md").write_text(AREA)
         self.spec = self.root / "docs" / "specs" / "demo.md"
-        self.spec.write_text(SPEC)
+        self.spec.write_text(APPROVED)
         (self.root / ".runs" / "demo").mkdir(parents=True)
         (self.root / ".runs" / "demo" / "triage.md").write_text(TRIAGE)
 
@@ -84,7 +88,7 @@ class OpenIssuesTest(unittest.TestCase):
         code, out, _ = self.run_open(yes=False)
 
         self.assertEqual(code, 0)
-        self.assertIn("- [feature, area:sharing] Share a task", out)
+        self.assertIn("- [feature, lane:full, area:sharing] Share a task", out)
         self.assertIn("- [scenario, area:sharing] SCENARIO-01 — Owner shares a task", out)
         self.assertIn("triage.md", out)
         self.assertEqual(self.calls(), [])
@@ -98,7 +102,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertIn("- Triage brief: posted on #1", text)
         self.assertIn("Size: large\nIssue: #2\n", text)
         self.assertIn("Size: small\nIssue: #3\n", text)
-        self.assertIn("--label feature --label area:sharing", self.creates()[0])
+        self.assertIn("--label feature --label lane:full --label area:sharing", self.creates()[0])
         self.assertIn("--label scenario --label area:sharing", self.creates()[1])
         self.assertIn("issue comment 1 --body-file", "\n".join(self.calls()))
         self.assertIn("api -X POST repos/{owner}/{repo}/issues/1/sub_issues -F sub_issue_id=9002", self.calls())
@@ -168,16 +172,70 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual((code, out), (0, "open-issues `demo`: nothing to open\n"))
 
     def test_a_spec_with_no_area_opens_issues_with_no_area_label(self):
-        self.spec.write_text(SPEC.replace("**Area**: sharing", "**Area**: none"))
+        self.spec.write_text(APPROVED.replace("**Area**: sharing", "**Area**: none"))
 
         _, out, _ = self.run_open(yes=False)
         code, _, err = self.run_open()
 
-        self.assertIn("- [feature] Share a task", out)
+        self.assertIn("- [feature, lane:light] Share a task", out)
         self.assertIn("- [scenario] SCENARIO-01 — Owner shares a task", out)
         self.assertEqual(code, 0, err)
         self.assertTrue(self.creates())
         self.assertFalse(any("area:" in c for c in self.creates()), self.creates())
+
+    def test_a_light_spec_opens_its_feature_issue_labelled_lane_light(self):
+        self.spec.write_text(APPROVED.replace("**Area**: sharing", "**Area**: none"))
+
+        self.run_open()
+
+        self.assertIn("--label feature --label lane:light", self.creates()[0])
+        self.assertNotIn("lane:", self.creates()[1])
+
+    def adopt(self, number=17):
+        """The request came from captured issue #17: the spec records it as the feature issue."""
+        self.spec.write_text(APPROVED + f"- Feature issue: #{number} (adopted)\n")
+
+    def edits(self):
+        return [c for c in self.calls() if c.startswith("issue edit")]
+
+    def test_an_adopted_issue_is_listed_to_relabel_not_to_create(self):
+        self.adopt()
+
+        code, out, _ = self.run_open(yes=False)
+
+        self.assertEqual(code, 0)
+        self.assertIn("- relabel #17: idea → feature, lane:full, area:sharing", out)
+        self.assertNotIn("] Share a task", out)
+        self.assertEqual(self.calls(), [])
+
+    def test_yes_relabels_the_adopted_issue_and_opens_the_scenarios_under_it(self):
+        self.adopt()
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.edits(), ["issue edit 17 --remove-label idea --add-label feature --add-label lane:full "
+                                        "--add-label area:sharing"])
+        self.assertEqual(len(self.creates()), 2)  # the two scenarios; no feature issue
+        text = self.spec.read_text()
+        self.assertIn("- Feature issue: #17\n", text)
+        self.assertNotIn("(adopted)", text)
+        self.assertIn("issue comment 17 --body-file", "\n".join(self.calls()))
+        self.assertIn("api -X POST repos/{owner}/{repo}/issues/17/sub_issues -F sub_issue_id=9001", self.calls())
+
+    def test_a_relabel_that_fails_keeps_the_adoption_and_the_rerun_tries_it_again(self):
+        self.adopt()
+        os.environ["GH_EDIT_FAIL"] = "1"
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 1)
+        self.assertIn("gh issue edit failed on #17", err)
+        self.assertIn("- Feature issue: #17 (adopted)", self.spec.read_text())
+        os.environ["GH_EDIT_FAIL"] = ""
+        self.assertEqual(self.run_open()[0], 0)
+        self.assertEqual(len(self.edits()), 2)
+        self.assertFalse(any("issue create --title Share a task" in c for c in self.creates()))
 
     def test_a_spec_without_the_v4_marker_is_not_opened(self):
         self.spec.write_text("# Feature: demo\n")
@@ -186,6 +244,39 @@ class OpenIssuesTest(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertIn("is not a specification (`<!-- spec-check: v4 -->`)", err)
+
+    def test_a_spec_that_never_passed_approval_is_not_opened_or_listed(self):
+        self.spec.write_text(SPEC)
+
+        for yes in (False, True):
+            with self.subTest(yes=yes):
+                code, out, err = self.run_open(yes=yes)
+
+                self.assertEqual(code, 2)
+                self.assertIn("the specification is not approved", err)
+                self.assertIn("spec-check.py --approval demo", err)
+                self.assertEqual(out, "")
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.spec.read_text(), SPEC)
+
+    def test_a_spec_whose_scenarios_changed_since_approval_is_not_opened(self):
+        self.spec.write_text(APPROVED.replace("a viewer tries", "an editor tries"))
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 2)
+        self.assertIn("the scenarios changed since they were approved on 2026-11-25", err)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_run_cut_off_part_way_resumes_on_the_same_approval(self):
+        os.environ["GH_FAIL_TITLE"] = "Owner stops sharing"
+        self.run_open()
+        os.environ["GH_FAIL_TITLE"] = ""
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Issue: #3", self.spec.read_text())
 
     def body(self, create: str) -> list[str]:
         """An `issue create` call's body, one line per part (the fake gh logs newlines as `|`)."""
@@ -209,7 +300,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual([l.split(":", 1)[0] for l in first], ["Why", "Design", "State", "Approach", "Done when"])
 
     def test_a_spec_with_no_primary_goal_line_takes_why_from_the_intent_sections_first_line(self):
-        self.spec.write_text(SPEC.replace("**Primary goal**: an owner shares one task with one member.",
+        self.spec.write_text(APPROVED.replace("**Primary goal**: an owner shares one task with one member.",
                                           "Owners cannot share a task with anyone today."))
 
         self.run_open()
@@ -217,7 +308,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual(self.body(self.creates()[0])[0], "Why: not possible yet — Owners cannot share a task with anyone today.")
 
     def test_a_scenario_with_no_action_takes_why_from_its_title_alone(self):
-        self.spec.write_text(SPEC.replace("Action: `SharingService.Unshare`\n", ""))
+        self.spec.write_text(pl.spec_check().stamped(SPEC.replace("Action: `SharingService.Unshare`\n", ""), "2026-11-25"))
 
         self.run_open()
 

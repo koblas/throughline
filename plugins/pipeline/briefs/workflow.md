@@ -24,7 +24,9 @@ repo whose `.claude/pipeline.json` sets `"mode": "single-session"`, it leaves ou
   - **Direct** — named bug with a known fix, refactor/rename/cleanup with no behavior change,
     config, deps, CI, tooling, docs, the pipeline's own config and instructions: do the work, no spec. A mechanical
     migration across many packages runs as a batch (`scripts/pipeline.py batch`,
-    `briefs/orchestration.md` → *Direct lane: batches*).
+    `briefs/orchestration.md` → *Direct lane: batches*). Work starts by claiming its issue:
+    `scripts/pipeline.py claim` lists the open, unassigned, unblocked ones; on the user's go-ahead,
+    `claim N --lane direct --yes` assigns it and labels its lane. The PR closes it (`Closes #N`).
 
   Not a lane: questions about how existing behavior works — answer them. Work already covered
   by a spec under `docs/specs/` — resume it at its first unbuilt scenario (a spec not yet
@@ -70,7 +72,8 @@ repo whose `.claude/pipeline.json` sets `"mode": "single-session"`, it leaves ou
   asked. Everything after approval auto-continues — do not ask permission between steps. Both
   are load-bearing precisely because pipeline starts implicitly: never draft scenarios without
   the kickoff answered, never write spec file from offhand request without approval.
-  `scripts/pipeline.py next` refuses a spec that lacks the kickoff's answers.
+  `scripts/pipeline.py next` refuses a spec that lacks the kickoff's answers, and `next` and
+  `open-issues` refuse one that never passed `spec-check --approval` (its `**Approved**:` line).
 <!-- /pipeline-only -->
 
 - **Every production change is tested — nothing ships untested.** Each scenario starts with
