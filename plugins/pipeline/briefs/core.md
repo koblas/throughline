@@ -9,9 +9,9 @@ audience — read only the one your prompt cites:
 | File | Read by |
 | --- | --- |
 | `briefs/build.md` — build cadence, sizing, bounded runs, scenario traceability, acceptance test setup | architect, developer, checkpoint reviewers |
-| `briefs/planning.md` — the coverage every plan names as steps | architect, developer writing a small plan, test / ui-test / checkpoint reviewers |
+| `briefs/planning.md` — the coverage every plan names as steps | architect, developer writing a small plan, test and checkpoint reviewers |
 | `briefs/fix-pass.md` — fix-pass scope, fixing a finding | developer in fix mode, orchestrator writing a fix-pass brief |
-| `briefs/proof.md` — mutation verification, assertions that prove nothing | developer, test / ui-test / correctness reviewers |
+| `briefs/proof.md` — mutation verification, assertions that prove nothing | developer, each surface's test reviewer, and any agent the config's `briefs` map gives it |
 | `briefs/review.md` — reviewing: scope and completeness | every reviewer |
 | `briefs/metrics.md` — the feature cost ledger | orchestrator only |
 | `briefs/orchestration.md` — pipeline steps, rules between them, agent roster | orchestrator only |
