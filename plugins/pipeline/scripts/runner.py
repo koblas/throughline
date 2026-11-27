@@ -76,20 +76,20 @@ A headless developer cannot run the full gates: they may have to leave the sandb
 run may not. So the runner runs them itself at every gate round, in its own environment — each
 surface's `full_gates` when the round changed that surface — and files a failure as a BLOCKER.
 With the config's `runner.cache` credentials in its environment its gates read a shared cache
-(here: heph's R2 cache through `runner.hephconfig`, `HEPH_PROFILES=runner`, `write: false`, and
-the key should be a read-only one — the code cannot check that); without them, the local cache. Its
+(the cache's credential and the environment that selects it are the config's; the key should be a
+read-only one — the code cannot check that); without them, the local cache. Its
 agents get neither the profile nor the key. A gate that
 failed is run again every round until it is seen green, whatever the fix touched. Every plan,
 build and fix brief tells the agent so (`next --env-note`; clear it with `--env-note ""` when
 handing the feature back to a chat session).
 
-The same goes for codegen (here `heph run codegen //...`): a developer that has edited an API definition ends its run
+The same goes for codegen (the config's `requests.codegen`): a developer that has edited an API definition ends its run
 `RUNNER: codegen`, the runner regenerates in its own environment and starts that run again with
 the outcome in its brief. The commands it will run this way are a fixed list, the
 `requests` of the repo's `.claude/pipeline.json`; a reply names one, it never supplies one. What such
 a command does is still defined by the repo's own build files, and it runs outside the sandbox — so
 `next` refuses to hand one over, and stops for a person, when the work has changed one of the
-config's `build_definitions` (here a BUILD file, heph or buf config, or the nix environment) or the
+config's `build_definitions` (build files, codegen config, the dev environment's definition) or the
 config itself — which no headless run may write.
 
 A developer run that ticks no plan step is counted; after two in a row, or a reply that opens
@@ -249,8 +249,8 @@ def full_gates(root: Path) -> list[tuple[str, dict]]:
     return [(s.name, g) for s in pipeline.config(root).surfaces for g in s.full_gates]
 # What a gate prints when code is wrong: a failing Go test or race, a compile error, a failing vitest file,
 # a type error, lint problems. Anything else on a non-zero exit is the environment, not a finding.
-# heph prints a failed target's log tail inside a numbered gutter (`  889 │ --- FAIL: …`), so a line-start
-# anchor allows that prefix.
+# A build tool may print a failed target's log tail inside a numbered gutter (`  889 │ --- FAIL: …`), so a
+# line-start anchor allows that prefix.
 _LINE = r"^(?:\s*\d+\s*│\s?)?"
 GATE_FAILED_RE = re.compile(
     rf"{_LINE}--- FAIL|{_LINE}FAIL(?:\s|$)|DATA RACE|{_LINE}\S+\.go:\d+:\d+:|Test Files\s.*failed|Tests\s.*failed|"
@@ -309,8 +309,8 @@ def failed_target_logs(root: Path, text: str, since: float = 0.0, per_target: in
     """The failing tests of each failed target a full gate names, read from the target's full log.
 
     The config's `runner.failed_target_logs`: `failed` a regex whose groups are (package, target, variant),
-    `log` a glob under the repo root with `{pkg}` and `{name}` (here: heph's
-    `.heph/sandbox/<pkg>/__target_<name>_*/log.txt`). Unset: nothing is attached. A gate shows only the tail
+    `log` a glob under the repo root with `{pkg}` and `{name}`, where the build tool keeps each target's
+    log (`.build/sandbox/<pkg>/__target_<name>_*/log.txt`, say). Unset: nothing is attached. A gate shows only the tail
     of a failed target's log; the assertion that explains the failure is usually above it. The newest log
     written at or after `since` is that run's; an older one belongs to an earlier run and is never attached.
     """
@@ -1034,7 +1034,7 @@ finding each note belongs to. If nothing applies, notes is the empty string.""",
                 text = (out.stdout + out.stderr).strip()
                 if out.returncode != 0 and not GATE_FAILED_RE.search(text):
                     # A gate dying with no failing test is usually the machine (vitest under memory pressure
-                    # in the heph sandbox); it has twice passed on the next run. One retry before a person.
+                    # in a build tool's sandbox); it has twice passed on the next run. One retry before a person.
                     self.say(f"  {target}: failed with no finding — running it once more")
                     out = self.run_gate(spec)
                     text = (out.stdout + out.stderr).strip()

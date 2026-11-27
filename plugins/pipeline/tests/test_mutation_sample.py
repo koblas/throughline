@@ -2,7 +2,6 @@
 
 import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,6 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakes  # noqa: E402 — the toolchain stand-ins
 import repo_fixture  # noqa: E402 — the repo config a scratch repo needs
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "mutation-sample.py"
@@ -177,8 +177,19 @@ class Repo(unittest.TestCase):
         self.tmp.cleanup()
 
 
-@unittest.skipUnless(shutil.which("go"), "needs the Go toolchain")
 class GoOverlayTest(Repo):
+    """Mutants through a build overlay, against a fake `go test` that fails where Go's would."""
+
+    def setUp(self):
+        super().setUp()
+        self.go = fakes.install(self)
+        # What the real tests would do: Test_big catches a flipped guard and a broken Big(3) boundary,
+        # Test_kind_one catches a do-nothing `case 1`, and a mutant that does not parse fails to build.
+        self.go.go_test_rule({"a/a.go": "if !(n > 3)"}, exit=1, output="--- FAIL: Test_big\nFAIL")
+        self.go.go_test_rule({"a/a_test.go": "!Big(3)"}, exit=1, output="--- FAIL: Test_big\nFAIL")
+        self.go.go_test_rule({"a/kind.go": "case 1: break"}, exit=1, output="--- FAIL: Test_kind_one\nFAIL")
+        self.go.go_test_rule({"a/a.go": "if n > {"}, exit=1, output="FAIL\texample.com/demo/a [build failed]")
+
     def mutant(self, line, mutated):
         return ms.Mutant("go/a/a.go", line, "guard", GO_SRC.splitlines()[line - 1], mutated)
 
@@ -187,6 +198,9 @@ class GoOverlayTest(Repo):
 
         self.assertEqual(result, "killed")
         self.assertEqual((self.root / "go" / "a" / "a.go").read_text(), GO_SRC)
+        call = self.go.calls("go")[-1]
+        self.assertEqual(call["argv"][:2], ["test", "./a/"])
+        self.assertIn("-overlay", call["argv"])
 
     def test_a_mutant_no_test_reaches_survives(self):
         self.assertEqual(ms.run_mutant(self.root, self.mutant(11, "\tif !(n > 9) {"), "1m", self.scratch), "survived")

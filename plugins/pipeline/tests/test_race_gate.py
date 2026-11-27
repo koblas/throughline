@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakes  # noqa: E402 — the toolchain stand-ins
+
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "race-gate.py"
 spec = importlib.util.spec_from_file_location("race_gate", SCRIPT)
 race_gate = importlib.util.module_from_spec(spec)
@@ -20,7 +23,8 @@ TAGGED = "//go:build lambda\n\npackage a\n"
 class BuildableTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.go = Path(self.tmp.name)
+        self.go = Path(self.tmp.name).resolve()
+        fakes.install(self)  # `go list` reads the build constraints
         (self.go / "go.mod").write_text("module example.test/m\n\ngo 1.22\n")
 
     def tearDown(self):

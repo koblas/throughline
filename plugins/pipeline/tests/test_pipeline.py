@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakes  # noqa: E402 — the toolchain stand-ins
 import repo_fixture  # noqa: E402 — the repo config a scratch repo needs
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "pipeline.py"
@@ -113,6 +114,7 @@ METRICS = "| Scenario | Size |\n| --- | --- |\n\n## Final gate\n| Round | Review
 
 class Feature(unittest.TestCase):
     def setUp(self):
+        self.tools = fakes.install(self)  # no real go, npx or linter: the lint of a new acceptance test, say
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve() / "repo"
         self.projects = Path(self.tmp.name).resolve() / "projects"
@@ -839,8 +841,8 @@ class NextTest(Feature):
         code, out = self.stalled_run("RUNNER: codegen\n\nI edited protos/core/x.proto and cannot regenerate here.")
 
         self.assertEqual(code, 0)
-        self.assertIn("    heph run codegen //...", out)
-        self.assertEqual((pl.ACTION["kind"], pl.ACTION["command"]), ("run", ["heph", "run", "codegen", "//..."]))
+        self.assertIn("    buildtool run codegen //...", out)
+        self.assertEqual((pl.ACTION["kind"], pl.ACTION["command"]), ("run", ["buildtool", "run", "codegen", "//..."]))
         self.assertEqual(self.state()["scenarios"]["SCENARIO-01"]["stalls"], 0)
         _, out = self.next("--ran", "codegen ok")
         brief = Path(out.split("Brief: ")[1].split(" — ")[0]).read_text()
@@ -855,7 +857,7 @@ class NextTest(Feature):
         code, out = self.next()   # e.g. the runner was killed after running it
 
         self.assertEqual(code, 0)
-        self.assertIn("    heph run codegen //...", out)
+        self.assertIn("    buildtool run codegen //...", out)
         self.assertNotIn("`pipeline:developer`", out)
 
     def test_a_request_is_served_even_when_the_same_run_ticked_the_scenario(self):
@@ -866,7 +868,7 @@ class NextTest(Feature):
 
         code, out = self.stalled_run("RUNNER: codegen\n\nall steps done, generated code is stale")
 
-        self.assertIn("    heph run codegen //...", out)
+        self.assertIn("    buildtool run codegen //...", out)
         self.assertNotIn("checkpoint", out)
 
     @mock.patch.object(pl, "CHECKPOINT", True)
@@ -880,7 +882,7 @@ class NextTest(Feature):
         _, asked = self.next()
         _, again = self.next("--ran", "codegen ok")
 
-        self.assertIn("    heph run codegen //...", asked)
+        self.assertIn("    buildtool run codegen //...", asked)
         self.assertFalse(self.state()["scenarios"]["SCENARIO-01"]["done"])
         self.assertIn("run: checkpoint-fix unit: SCENARIO-01", again)
         self.assertIn("codegen ok", Path(again.split("Brief: ")[1].split(" — ")[0]).read_text())
@@ -909,7 +911,7 @@ class NextTest(Feature):
         code, out = self.stalled_run("RUNNER: codegen")
 
         self.assertEqual(code, 0)
-        self.assertIn("    heph run codegen //...", out)
+        self.assertIn("    buildtool run codegen //...", out)
 
     def test_a_reply_cannot_name_a_command_of_its_own(self):
         self.planned()
