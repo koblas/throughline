@@ -117,6 +117,17 @@ def git(root: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
 
 
+def _sibling_adapters():
+    """adapters, the sibling that says how each surface's language is worked."""
+    if "adapters" not in sys.modules:
+        import importlib.util
+        loader = importlib.util.spec_from_file_location("adapters", HERE / "adapters.py")
+        module = importlib.util.module_from_spec(loader)
+        sys.modules["adapters"] = module
+        loader.loader.exec_module(module)
+    return sys.modules["adapters"]
+
+
 def surface_of(root: Path, frontend: bool = False, name: str | None = None):
     """The surface sampled: the one named, else the repo config's first `ts` (frontend) or `go` surface."""
     config = pc.load(root)
@@ -474,11 +485,12 @@ def main() -> int:
         except pc.ConfigError as why:
             print(f"mutation-sample: {why}", file=sys.stderr)
             return 2
-        if surface.kind == "script":  # protocol 1 has no mutation operation: say so, never sample as Go
+        engine = _sibling_adapters().adapter_for(root, surface).mutation
+        if engine is None:  # an adapter with no mutation engine: say so, never sample it as Go
             print(f"mutation-sample: skipped (the `{surface.name}` surface's language, `{surface.language}`, is "
                   "supplied by the repo's adapter, and the adapter protocol has no mutation sampling)")
             return 0
-        args.frontend = surface.kind == "ts"
+        args.frontend = engine == "ts"
     if args.repair or args.frontend:  # the Go path never writes the tree, and must not disturb a live frontend run
         if (pid := sample_running(root)) and args.frontend:
             print(f"mutation-sample: another frontend sample (pid {pid}) is mutating this tree — no frontend sample")

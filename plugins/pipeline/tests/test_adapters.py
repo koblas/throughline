@@ -293,6 +293,63 @@ class SpecTest(AdapterRepo):
         self.assertTrue(cites.search("see `src/greet.py:2`"))
 
 
+GO_SURFACE = {"language": "go", "production": {"include": ["{root}/**/*.go"], "exclude": ["**/*_test.go"]},
+              "tests": {"include": ["{root}/**/*_test.go"]}, "reviewers": {"correctness": "c", "test": "pipeline:test-reviewer"},
+              "phase": [{"name": "build", "command": ["go", "build", "{packages}"]}]}
+
+
+class BuiltInTest(unittest.TestCase):
+    """Go and TypeScript work through the same adapter calls as a repo-supplied language."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        subprocess.run([*GIT, "init", "-q", str(self.root)], check=True)
+        surfaces = {name: json.loads(json.dumps(GO_SURFACE).replace("{root}", name)) | {"root": name}
+                    for name in ("api", "worker")}
+        (self.root / ".claude").mkdir()
+        (self.root / ".claude" / "pipeline.json").write_text(json.dumps({**CONFIG, "surfaces": surfaces}))
+        for f in ("api/x/a.go", "worker/y/b.go"):
+            (self.root / f).parent.mkdir(parents=True)
+            (self.root / f).write_text("package x\n")
+        subprocess.run([*GIT, "add", "-A"], cwd=self.root, check=True)
+        subprocess.run([*GIT, "commit", "-qm", "base"], cwd=self.root, check=True)
+
+    def test_each_surface_gets_its_adapter(self):
+        c = pc.load(self.root)
+
+        self.assertIsInstance(ad.adapter_for(self.root, c.surface("api")), ad.GoAdapter)
+        self.assertIsInstance(ad.adapter_for(self.root, None, "a.test.ts"), ad.TsAdapter)
+        self.assertIsInstance(ad.adapter_for(self.root, None, "a_test.go"), ad.GoAdapter)
+
+    def test_a_second_go_surface_gets_its_phase_too(self):
+        for f in ("api/x/a.go", "worker/y/b.go"):
+            (self.root / f).write_text("package x\n\nfunc A() {}\n")
+
+        targets = pl.phase_targets(self.root, "HEAD", pl.snap(self.root))
+
+        self.assertEqual(targets, {"api": ["./x/"], "worker": ["./y/"]})
+        self.assertEqual(pl.phase_argvs(self.root, targets),
+                         [["--surface", "api", "./x/"], ["--surface", "worker", "./y/"]])
+
+    def test_phase_by_surface_name_fills_that_surfaces_go_placeholders(self):
+        ck = load("check_adapters", "check.py")
+        args = ck.parser().parse_args(["phase", "--surface", "worker", "./y/"])
+        with contextlib.chdir(self.root):
+            checks = ck.phase_checks(self.root, args, self.root / "cover.out")
+
+        self.assertEqual(checks, [("build", ["go", "build", "./y/"], self.root / "worker", "go")])
+
+    def test_the_race_gate_and_mutation_engine_are_the_adapters_to_say(self):
+        c = pc.load(self.root)
+        go = ad.adapter_for(self.root, c.surface("api"))
+
+        self.assertEqual((go.races, go.mutation), (True, "go"))
+        self.assertEqual((ad.TsAdapter.races, ad.TsAdapter.mutation), (False, "ts"))
+        self.assertEqual((ad.ScriptAdapter.races, ad.ScriptAdapter.mutation), (False, None))
+
+
 class ConfigTest(unittest.TestCase):
     def refusal(self, surface: dict) -> str:
         with self.assertRaises(pc.ConfigError) as caught:

@@ -222,24 +222,19 @@ def report(root: Path, base: str, to: str | None, frontend: bool, surface: str |
     asked through its adapter's `absence`: one it does not offer prints a `skipped` line, and one that
     fails raises AdapterError."""
     tests = test_surface(root, frontend, surface)
-    frontend = tests.kind == "ts"
     names = sh("git", "-C", str(root), "diff", "--name-only", base, *([to] if to else []), check=True).split()
-    lines = []
     files = {}
     for path in sorted(p for p in names if tests.is_test(p)):
         new = sh("git", "-C", str(root), "show", f"{to}:{path}") if to else \
             ((root / path).read_text() if (root / path).is_file() else "")
         old = sh("git", "-C", str(root), "show", f"{base}:{path}")
-        if tests.kind == "script":
-            files[path] = {"new": new, "old": old or None}
-            continue
-        lines += [f"- `{path}:{line}` `{name}` — {why}" for line, name, why in problems(new, old, tests.kind == "ts")]
-    if files:
-        ad = _adapters_module()
-        try:
-            lines += [f"- `{p}:{line}` `{name}` — {why}" for p, line, name, why in ad.absence(root, tests, files)]
-        except ad.Skipped as why:
-            return f"absence-only: skipped ({why})\n"
+        files[path] = {"new": new, "old": old or None}
+    ad = _adapters_module()
+    try:
+        lines = [f"- `{p}:{line}` `{name}` — {why}" for p, line, name, why in
+                 ad.adapter_for(root, tests).absence_problems(files)] if files else []
+    except ad.Skipped as why:
+        return f"absence-only: skipped ({why})\n"
     if not lines:
         return ""
     head = (f"absence-only tests: {len(lines)} — each passes if the code under test does nothing. For each: make "
