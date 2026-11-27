@@ -3,7 +3,8 @@
 # .github/workflows/docs.yml. Build locally: make docs (or make docs-serve).
 #
 # The site follows the Divio documentation system (https://docs.divio.com/documentation-system/):
-# Start here (tutorials), Concepts (explanation), Guides (how-to) and Reference.
+# Start here (tutorials), Concepts (explanation), Guides (how-to) and Reference,
+# plus Examples: complete annotated artifacts, written like reference.
 # .claude/skills/docs/SKILL.md says which quadrant a change belongs in;
 # docs/check.py checks the reference pages against the plugin.
 site_name: throughline
@@ -14,6 +15,8 @@ repo_name: koblas/throughline
 edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: out/site
+extra_css:
+  - stylesheets/landing.css # the landing page only (docs/index.md)
 exclude_docs: |
   check.py
 
@@ -41,6 +44,10 @@ theme:
 markdown_extensions:
   - admonition
   - footnotes
+  # Material's icon shortcodes (:material-…:) on the landing cards.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
   - attr_list
   - md_in_html
   - tables
@@ -69,9 +76,15 @@ validation:
 nav:
   - Start here:
       - index.md
+      - Your first feature: tutorials/first-feature.md
   - Concepts:
       - concepts/index.md
+      - Why it exists: concepts/why.md
       - How the pipeline works: concepts/how-the-pipeline-works.md
+      - Scenarios and tests: concepts/scenarios-and-tests.md
+      - The gate: concepts/the-gate.md
+      - The conductor and the runner: concepts/the-runner.md
+      - Glossary: concepts/glossary.md
   - Guides:
       - guides/index.md
       - Install:
@@ -80,12 +93,34 @@ nav:
       - Configure a repo:
           - How to configure a repo: guides/configure/configure-a-repo.md
           - How to start a new repo: guides/configure/new-repo.md
+          - How to add a reviewer: guides/configure/add-a-reviewer.md
+          - How to add a language: guides/configure/add-a-language.md
+          - How to use single-session mode: guides/configure/single-session.md
+      - Run features:
+          - How to run a feature unattended: guides/run/run-unattended.md
+          - How to resume a stopped run: guides/run/resume-a-stopped-run.md
+          - How to run reviewers on a path: guides/run/run-reviewers.md
+          - How to file a feature's issue drafts: guides/run/file-issue-drafts.md
+          - How to write a feature's retro: guides/run/write-a-retro.md
       - Develop:
           - How to set up for development: guides/develop/dev-environment.md
           - How to write documentation: guides/develop/docs.md
+  - Examples:
+      - examples/index.md
+      - A feature, from request to spec: examples/scoping-a-feature.md
+      - pipeline.json for four repos: examples/pipeline-json.md
+      - A language adapter: examples/language-adapter.md
+      - An unattended run: examples/unattended-run.md
+      - A Direct-lane batch: examples/direct-lane-batch.md
   - Reference:
       - reference/index.md
       - Commands: reference/commands.md
       - Agents: reference/agents.md
       - Skills: reference/skills.md
       - pipeline.json: reference/pipeline-json.md
+      - Feature spec format: reference/feature-spec.md
+      - Gate and severity: reference/gate.md
+      - Scripts: reference/scripts.md
+      - The runner: reference/runner.md
+      - Hooks: reference/hooks.md
+      - Files: reference/files.md
