@@ -94,10 +94,12 @@ cfg = _sibling("pipeline_config", "pipeline_config.py")
 ConfigError = cfg.ConfigError
 here, brief, agent, script = cfg.here, cfg.brief, cfg.agent, cfg.script
 PLAN_HEADERS = ("Size", "Cadence", "Acceptance test", "Narrow loop", "Mutation checks")
-PLAN_TEST_RE = re.compile(r"^`[^`]+\.(?:go|tsx?|jsx?)`\s+`[^`]+`")
+# A plan's `Acceptance test:` header: a test file in any language (never a document or data file), then its name.
+PLAN_TEST_RE = re.compile(r"^`[^`]+\.(?!(?:md|txt|json|ya?ml|toml|lock)`)[A-Za-z0-9]+`\s+`[^`]+`")
 MAX_BUILD_BATCHES = 5
 MAX_PLAN_LINES = 120  # the cap is "about 100"; the check fails only well past it
-TEST_FILE_RE = re.compile(r"(_test\.go|\.test\.[jt]sx?)$")  # plus the config's `test_support_paths`
+# The built-in languages' test files; every surface's own `tests` globs count too (`is_test_file`).
+TEST_FILE_RE = re.compile(r"(_test\.go|\.test\.[jt]sx?)$")
 # The brief every surface's test reviewer reads besides review.md when the repo's config names none for it.
 # Which other briefs an agent reads (the repo's `storage.md`, `navigation.md` and the like) is the config's
 # `briefs` map, keyed by agent name: the plugin knows no repo agent by name (`extra_briefs`).
@@ -329,6 +331,11 @@ def excluded_line(spec_dir: Path) -> str:
     m = re.search(r"^\*\*Excluded paths\*\*:.*?(?=\n\s*\n)", spec.read_text(), re.M | re.S)
     line = " ".join(m.group(0).split()) if m else ""
     return "" if line.endswith(": none") else line
+
+
+def is_test_file(c, path: str) -> bool:
+    """A test file of a built-in language, or of any surface by its `tests` globs."""
+    return bool(TEST_FILE_RE.search(path)) or any(s.is_test(path) for s in c.surfaces)
 
 
 def production(surface, files: list[str]) -> bool:
@@ -582,7 +589,7 @@ def gate(root: Path, slug: str, round_no: int, base: str, pre_fix: str | None, o
     # mid-feature. Run output is never the feature's change, even in a tree where `.runs/` is not gitignored.
     files = write_diff(root, diff, old, post, [*exclude, RUNS_DIR, *(pipeline_paths(root) if regate else [])])
     c = config(root)
-    sensitive = [f for f in files if c.is_sensitive(f) and not TEST_FILE_RE.search(f) and not c.is_test_support(f)]
+    sensitive = [f for f in files if c.is_sensitive(f) and not is_test_file(c, f) and not c.is_test_support(f)]
     correctness, on_gate = c.correctness_reviewers(), c.gate_reviewers()
 
     triggered, skipped = {}, {}
@@ -2287,28 +2294,46 @@ def serve_request(root: Path, state: dict) -> bool:
 MAX_PHASE_FIX_RUNS = 2
 
 
-def phase_targets(root: Path, base: str, to: str) -> tuple[list[str], list[str]]:
-    """The Go packages (`check.py phase --go`) and TS workspace names (`--ts`) whose production or test
-    files changed between `base` and `to`; deleted files and the `generated_roots` left out."""
+def phase_targets(root: Path, base: str, to: str) -> dict[str, list[str]]:
+    """What `check.py phase` runs on, by surface name, for the production or test files changed between
+    `base` and `to` (deleted files and the `generated_roots` left out): the Go packages of the first `go`
+    surface, the TS workspace names of the first `ts` surface, and the changed files of each surface in a
+    repo-supplied language. A surface with nothing changed, or no `phase` steps, is left out."""
     conf = config(root)
-    changed = sh(root, "git", "diff", "--name-only", "--diff-filter=d", base, to).split()
+    changed = [rel for rel in sh(root, "git", "diff", "--name-only", "--diff-filter=d", base, to).split()
+               if not (conf.generated_roots and rel.startswith(conf.generated_roots))]
     go, ts = conf.language("go"), conf.language("ts")
-    pkgs, workspaces = set(), set()
-    for rel in changed:
-        if conf.generated_roots and rel.startswith(conf.generated_roots):
+    out: dict[str, set[str]] = {}
+    for s in conf.surfaces:
+        if not s.phase or (s.kind == "go" and s is not go) or (s.kind == "ts" and s is not ts):
             continue
-        if go and go.phase and (go.is_production(rel) or go.is_test(rel)):
-            parent = Path(go.rel(rel)).parent.as_posix()
-            pkgs.add("./" if parent == "." else f"./{parent}/")
-        if ts and ts.phase and (ts.is_production(rel) or ts.is_test(rel)) and (ws := ts.workspace(rel)):
-            workspaces.add(Path(ws).name)
-    return sorted(pkgs), sorted(workspaces)
+        for rel in (r for r in changed if s.is_production(r) or s.is_test(r)):
+            if s.kind == "go":
+                parent = Path(s.rel(rel)).parent.as_posix()
+                out.setdefault(s.name, set()).add("./" if parent == "." else f"./{parent}/")
+            elif s.kind == "ts":
+                if ws := s.workspace(rel):
+                    out.setdefault(s.name, set()).add(Path(ws).name)
+            else:
+                out.setdefault(s.name, set()).add(rel)
+    return {name: sorted(targets) for name, targets in out.items()}
 
 
-def run_phase(root: Path, base: str, go: list[str], ts: list[str]) -> tuple[bool, str]:
-    """`check.py phase --base <base>` once on the Go packages and once per TS workspace: (all passed, the output)."""
+def phase_argvs(root: Path, targets: dict[str, list[str]]) -> list[list[str]]:
+    """The `check.py phase` arguments for `targets`: `--go` once, `--ts` once per workspace, `--surface` once
+    per surface in a repo-supplied language."""
+    argvs: list[list[str]] = []
+    for name, found in targets.items():
+        kind = config(root).surface(name).kind
+        argvs += ([["--go", *found]] if kind == "go" else [["--ts", w] for w in found] if kind == "ts"
+                  else [["--surface", name, *found]])
+    return argvs
+
+
+def run_phase(root: Path, base: str, targets: dict[str, list[str]]) -> tuple[bool, str]:
+    """`check.py phase --base <base>` on each surface's targets (`phase_argvs`): (all passed, the output)."""
     ok, outs = True, []
-    for argv in ([["--go", *go]] if go else []) + [["--ts", w] for w in ts]:
+    for argv in phase_argvs(root, targets):
         out = subprocess.run([str(HERE / "check.py"), "phase", "--base", base, *argv], cwd=root,
                              capture_output=True, text=True)
         ok = ok and out.returncode == 0
@@ -2319,19 +2344,32 @@ def run_phase(root: Path, base: str, go: list[str], ts: list[str]) -> tuple[bool
 RUN_PHASE = run_phase  # replaced in tests: they never run go or npm
 
 
-def phase_gate(root: Path, unit: str, s: dict) -> None:
+def edited_adapters(root: Path, base: str, to: str) -> list[str]:
+    """The surfaces' adapter files (`Config.adapter_files`) changed between `base` and `to`."""
+    adapters = config(root).adapter_files()
+    return sorted(f for f in sh(root, "git", "diff", "--name-only", base, to).split() if f in adapters) if adapters else []
+
+
+def phase_gate(root: Path, unit: str, s: dict, adapter_ok: bool = False) -> None:
     """Run the phase checks on what a ticked scenario changed since its pre-scenario snapshot.
 
     A pass (or nothing to check) sets `phase_ok`; a failure sets `phase_failed` to the output, which the
-    next build run carries. Refuses once MAX_PHASE_FIX_RUNS fix runs have not made it pass.
+    next build run carries. Refuses once MAX_PHASE_FIX_RUNS fix runs have not made it pass. Refuses, too,
+    when the work has edited an adapter that judges it, until a person has read that change
+    (`next --adapter-ok`): a run that rewrote its own judge could pass on nothing.
     """
     base = s["pre"] or "HEAD"
-    go, ts = phase_targets(root, base, snap(root))
-    if not go and not ts:
+    to = snap(root)
+    targets = phase_targets(root, base, to)
+    if not any(targets.values()):
         s["phase_ok"] = True
         return
-    ok, out = RUN_PHASE(root, base, go, ts)
-    what = "; ".join([*([f"--go {' '.join(go)}"] if go else []), *(f"--ts {w}" for w in ts)])
+    if not adapter_ok and (edited := edited_adapters(root, base, to)):
+        raise Refuse(f"{unit} changed {', '.join(f'`{f}`' for f in edited)}, the adapter that judges its coverage "
+                     "and its absence-only tests, so its verdict cannot be taken as it stands. Read the change, then "
+                     "call `next --adapter-ok` to trust that adapter for the rest of this feature, or revert it")
+    ok, out = RUN_PHASE(root, base, targets)
+    what = "; ".join(" ".join(argv) for argv in phase_argvs(root, targets))
     if ok:
         s["phase_ok"] = True
         print(f"note: {unit}: phase checks passed ({what})\n")
@@ -2402,7 +2440,7 @@ def next_action(root: Path, slug: str, state: dict, args: argparse.Namespace) ->
             return 0
 
         if ticked.get(unit) and s["checkpoint"] is None and not s.get("phase_ok") and not s.get("phase_failed"):
-            phase_gate(root, unit, s)
+            phase_gate(root, unit, s, state.get("adapter_ok", False))
         if not ticked.get(unit) or s.get("phase_failed"):
             reply_file = s.get("last_reply", "its transcript")
             if s.get("blocked"):
@@ -2683,6 +2721,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="an agent's reply in a file, instead of looking it up in a transcript")
         p.add_argument("--json", action="store_true", help="also print the action as JSON after `=== ACTION ===`")
     n.add_argument("--plan-ok", action="store_true", help="the current scenario's plan passed the deviation scan")
+    n.add_argument("--adapter-ok", action="store_true",
+                   help="a person read this feature's change to a language adapter: trust its verdicts from here on")
     n.add_argument("--only", metavar="A,B", help="re-gate: the reviewers to re-run; `none` re-runs the checks alone")
     n.add_argument("--drop-pending", action="store_true", help="forget the step that was printed and print it again")
     n.add_argument("--accept-open", action="store_true",
@@ -2924,6 +2964,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             save_state(spec_dir, state)
         if args.cmd == "record":
             return 0
+        if getattr(args, "adapter_ok", False):
+            state["adapter_ok"] = True
         if args.plan_ok:
             current = next((u for u in state["order"] if not state["scenarios"][u]["done"]
                             and not state["scenarios"][u]["folded_into"]), None)

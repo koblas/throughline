@@ -207,16 +207,39 @@ def test_surface(root: Path, frontend: bool = False, name: str | None = None):
     return found
 
 
+def _adapters_module():
+    """adapters, the sibling that speaks the adapter protocol to a repo-supplied language."""
+    if "adapters" not in sys.modules:
+        loader = importlib.util.spec_from_file_location("adapters", Path(__file__).resolve().parent / "adapters.py")
+        module = importlib.util.module_from_spec(loader)
+        sys.modules["adapters"] = module
+        loader.loader.exec_module(module)
+    return sys.modules["adapters"]
+
+
 def report(root: Path, base: str, to: str | None, frontend: bool, surface: str | None = None) -> str:
+    """The absence-only list for the surface's changed tests. A surface in a repo-supplied language is
+    asked through its adapter's `absence`: one it does not offer prints a `skipped` line, and one that
+    fails raises AdapterError."""
     tests = test_surface(root, frontend, surface)
-    frontend = tests.language == "ts"
+    frontend = tests.kind == "ts"
     names = sh("git", "-C", str(root), "diff", "--name-only", base, *([to] if to else []), check=True).split()
     lines = []
+    files = {}
     for path in sorted(p for p in names if tests.is_test(p)):
         new = sh("git", "-C", str(root), "show", f"{to}:{path}") if to else \
             ((root / path).read_text() if (root / path).is_file() else "")
         old = sh("git", "-C", str(root), "show", f"{base}:{path}")
-        lines += [f"- `{path}:{line}` `{name}` — {why}" for line, name, why in problems(new, old, frontend)]
+        if tests.kind == "script":
+            files[path] = {"new": new, "old": old or None}
+            continue
+        lines += [f"- `{path}:{line}` `{name}` — {why}" for line, name, why in problems(new, old, tests.kind == "ts")]
+    if files:
+        ad = _adapters_module()
+        try:
+            lines += [f"- `{p}:{line}` `{name}` — {why}" for p, line, name, why in ad.absence(root, tests, files)]
+        except ad.Skipped as why:
+            return f"absence-only: skipped ({why})\n"
     if not lines:
         return ""
     head = (f"absence-only tests: {len(lines)} — each passes if the code under test does nothing. For each: make "
@@ -238,6 +261,9 @@ def main() -> int:
     except _config_module().ConfigError as why:
         print(f"absence-only: {why}", file=sys.stderr)
         return 2
+    except _adapters_module().AdapterError as why:
+        print(f"absence-only: the adapter failed: {why}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -111,7 +111,7 @@ class ValidationTest(unittest.TestCase):
 
         config = repo_fixture.content_buddy()
         config["surfaces"]["frontend"]["language"] = "rust"
-        self.assertIn("`surfaces.frontend.language` must be one of go, ts", self.refusal(config))
+        self.assertIn("`surfaces.frontend.adapter` is missing", self.refusal(config))
 
     def test_a_single_session_repo_may_leave_out_the_gate_keys(self):
         config = repo_fixture.content_buddy() | {"mode": "single-session"}

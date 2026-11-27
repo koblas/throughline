@@ -62,6 +62,8 @@ The scripts read their config from the repo they run in, never from beside thems
   Its optional `"briefs"` map names, per agent, the briefs it reads besides its standard ones
   (`{"correctness-reviewer": ["proof.md", "storage.md"], "architect": ["navigation.md"]}`), and a
   surface's `phase` steps may run the repo's own diff checks with `{base}` and `{to}`.
+  A surface's `language` is `go` or `ts`, or any other language the repo supplies through an
+  `adapter` command that speaks the protocol in `plugins/pipeline/scripts/adapters.py`.
   Its optional `"runner": {"file_issues": true}` lets the unattended runner file a finished
   feature's issue drafts itself; without it they wait for a person.
 - `.claude/runner-settings.json` — the unattended runner's permission profile.

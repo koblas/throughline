@@ -33,6 +33,12 @@ reads `proof.md`. The plugin names no repo agent itself.
 issue drafts itself at DONE (`gh issue create`, through `pipeline.py file-issues --yes`). The setting is
 the user's yes for every unattended run in the repo; without it the drafts wait for a person.
 
+`language` (per surface): `go` and `ts` are built in. Any other value is a language the repo supplies:
+the surface then names `adapter`, a command (run from the repo root) that answers the plugin's adapter
+protocol (`adapters.py`): `["python3", ".claude/scripts/py-adapter.py"]`. Its phase steps may use
+`{files}` (the changed files of the surface), `{report}` (a scratch directory the test step writes and
+the adapter's `coverage` reads), `{base}` and `{to}`. The adapter's script is a build definition.
+
 `ui` (optional, per surface) marks a surface that ships screens the gate looks at:
 `{"url": "http://localhost:5173", "start": ["npm", "run", "dev"]}`. `url` (required, http or https)
 is where the running app answers; `start` (optional) is the command, run from the surface's root,
@@ -67,7 +73,7 @@ REPO_BRIEFS = Path(".claude") / "briefs"
 # The issue drafts, per feature: `<git common dir>/<DRAFTS_DIR>/<slug>/ISSUES.md` — outside every worktree
 # (`pipeline.issues_file()`; `session-context.py` lists the unfiled ones).
 DRAFTS_DIR = "pipeline"  # the briefs a repo adds to the plugin's, relative to its root
-LANGUAGES = ("go", "ts")
+LANGUAGES = ("go", "ts")  # the core languages the plugin's own code handles; any other needs an `adapter`
 MODES = ("pipeline", "single-session")  # `mode` in pipeline.json; the first is the default
 SINGLE_SESSION = "single-session"
 
@@ -217,6 +223,14 @@ class Surface:
         self.test_one: list[str] | None = raw.get("test_one")
         self.test_related: list[str] | None = raw.get("test_related")
         self.ui: dict | None = raw.get("ui")  # {"url", "start"?}: the running app the gate screenshots
+        self.adapter: list[str] | None = raw.get("adapter")  # the repo's language adapter: `adapters.py`
+
+    @property
+    def kind(self) -> str:
+        """How the plugin handles this surface's language: `go` and `ts` by its own code, `script` through
+        the surface's `adapter` command. Every language-specific step dispatches on this, never on a
+        two-way go/ts test, so a script surface can never fall into the Go path."""
+        return self.language if self.language in LANGUAGES else "script"
 
     def owns(self, path: str) -> bool:
         """Under the surface's root: what a checkpoint asks its test reviewer about."""
@@ -291,8 +305,16 @@ class Config:
     def is_test_support(self, path: str) -> bool:
         return bool(self.test_support_re and self.test_support_re.search(path))
 
+    def adapter_files(self) -> set[str]:
+        """The repo files the surfaces' adapter commands run (`python3 .claude/a.py` → `.claude/a.py`)."""
+        return {a.removeprefix("./") for s in self.surfaces for a in s.adapter or [] if (self.root / a).is_file()}
+
     def is_build_definition(self, path: str) -> bool:
-        return path == CONFIG.as_posix() or bool(self.build_definitions_re and self.build_definitions_re.search(path))
+        """A file that decides what a command run outside the sandbox does: the config, its
+        `build_definitions`, and every surface's adapter script (a feature that edits its own adapter
+        could make coverage pass on nothing)."""
+        return (path == CONFIG.as_posix() or path in self.adapter_files()
+                or bool(self.build_definitions_re and self.build_definitions_re.search(path)))
 
     def request(self, name: str) -> list[str] | None:
         r = self.requests.get(name)
@@ -374,8 +396,15 @@ def validate(path: Path, raw) -> None:
         at = f"surfaces.{name}"
         if not isinstance(s, dict):
             _fail(path, at, "must be an object")
-        if _need(path, s, "language", str, at) not in LANGUAGES:
-            _fail(path, f"{at}.language", f"must be one of {', '.join(LANGUAGES)}")
+        language = _need(path, s, "language", str, at)
+        adapter = _need(path, s, "adapter", "command", at, optional=True)
+        if language in LANGUAGES and adapter is not None:
+            _fail(path, f"{at}.adapter", f"is for a language the plugin does not handle itself; `{language}` is "
+                  "built in, so leave it out")
+        if language not in LANGUAGES and adapter is None:
+            _fail(path, f"{at}.adapter", f"is missing: `{language}` is not one of the built-in languages "
+                  f"({', '.join(LANGUAGES)}), so the surface names the command that speaks the adapter "
+                  "protocol (`adapters.py`)")
         _need(path, s, "root", str, at)
         _need(path, s, "changes", "str_list", at, optional=True)
         _need(path, s, "workspaces", "str_list", at, optional=True)

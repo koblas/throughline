@@ -85,7 +85,10 @@ V4_MARKER = "<!-- spec-check: v4 -->"
 V4_SECTIONS = ("Intent and out of scope", "Decisions", "Scenarios", "Links")
 V4_INTENT_LINES = ("Run", "Area", "Screens", "Excluded paths")
 DECISION_RE = re.compile(r"^[-*]?\s*D-(\d+) \(\d{4}-\d{2}-\d{2}\):\s*\S.*\s[—-]+\s+\S")
-V4_ACCEPTANCE_RE = re.compile(r"^Acceptance test:\s*`([^`]+\.(?:go|tsx?|jsx?))`\s+`([^`]+)`\s*$")
+# A test file in any language (a document or data file is never one), then the test's name, and nothing after:
+# trailing text means the line is not a tick. Whether the file is a test of a configured surface is checked
+# where the repo's config is at hand (`check`).
+V4_ACCEPTANCE_RE = re.compile(r"^Acceptance test:\s*`([^`]+\.(?!(?:md|txt|json|ya?ml|toml|lock)`)[A-Za-z0-9]+)`\s+`([^`]+)`\s*$")
 SCREEN_STATES = ("loading", "empty", "error", "populated")
 
 
@@ -273,7 +276,24 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 PLAN_REF_RE = re.compile(r"^Acceptance test:\s*`([^`]+)`\s+`([^`]+)`", re.MULTILINE)
 
 
-CITE_RE = re.compile(r"`((?:[\w.@-]+/)*[\w.@-]+\.(?:go|tsx?|jsx?|proto|py|ya?ml|sql|json|md))(?::(\d+)(?:-(\d+))?)?`")
+CITE_SUFFIXES = ("go", "tsx?", "jsx?", "proto", "py", "ya?ml", "sql", "json", "md")
+CITE_RE = re.compile(r"`((?:[\w.@-]+/)*[\w.@-]+\.(?:" + "|".join(CITE_SUFFIXES) + r"))(?::(\d+)(?:-(\d+))?)?`")
+
+
+def cite_re(root: Path) -> re.Pattern:
+    """CITE_RE, with the suffixes of every configured surface's file globs added (`**/*.rb` → `rb`), so a
+    spec in a repo-supplied language has its cited paths checked too."""
+    try:
+        surfaces = pc.load(root).surfaces
+    except pc.ConfigError:
+        return CITE_RE
+    globs = [g for s in surfaces for g in (*s.raw["production"]["include"], *s.raw["tests"]["include"])]
+    extra = sorted({m.group(1) for g in globs if (m := re.search(r"\.([A-Za-z0-9]+)$", g))} - {"go", "ts", "tsx", "js",
+                                                                                         "jsx", "py", "sql"})
+    if not extra:
+        return CITE_RE
+    return re.compile(r"`((?:[\w.@-]+/)*[\w.@-]+\.(?:" + "|".join([*CITE_SUFFIXES, *map(re.escape, extra)])
+                      + r"))(?::(\d+)(?:-(\d+))?)?`")
 # Gitignored codegen output (the config's `generated_roots`) is absent from a fresh checkout, so a citation
 # into it cannot be judged here.
 # A spec abbreviates a long root as one capital letter (`O/recover.go` for a long service path) or `...`.
@@ -367,8 +387,9 @@ def cited_path_problems(root: Path, text: str, tracked: list[str]) -> list[str]:
                 lengths[path] = 0
         return lengths[path]
 
+    cites = cite_re(root)
     for line in text.splitlines():
-        for m in CITE_RE.finditer(line):
+        for m in cites.finditer(line):
             cite, start, end = m.group(1), m.group(2), m.group(3)
             if not start and ("/" not in cite or re.search(r"\bnew\b", line, re.I)):
                 continue
@@ -553,6 +574,52 @@ def run_ts_test(root: Path, path: str, name: str) -> str | None:
     return None
 
 
+def test_surface(root: Path, path: str):
+    """The surface whose `tests` globs hold `path`; False when the config has surfaces and none holds it;
+    None when there is no config to ask (the file is then judged by its suffix alone, as before)."""
+    try:
+        surfaces = pc.load(root).surfaces
+    except pc.ConfigError:
+        return None
+    return next((s for s in surfaces if s.is_test(path)), False)
+
+
+def kind_of(surface, path: str) -> str:
+    """`go`, `ts` or `script`: the surface's kind, else the built-in language the suffix names."""
+    if surface:
+        return surface.kind
+    return "go" if path.endswith(".go") else "ts"
+
+
+def test_exists(surface, path: str, src: str, name: str) -> bool:
+    """Whether the test file `src` defines the test `name`. A repo-supplied language has no parser here:
+    its test's name (the last part of a `›` or `/` path) must appear in the file."""
+    kind = kind_of(surface, path)
+    if kind == "script":
+        last = re.split(r"\s*›\s*|/", name)[-1].strip()
+        return bool(last) and last in src
+    return go_test_exists(src, name) if kind == "go" else ts_test_exists(src, name)
+
+
+def run_script_test(root: Path, surface, path: str, name: str) -> str | None:
+    """Run one test of a repo-supplied language with its surface's `test_one` (`{file}`, `{name}`); exit 0
+    is a pass. None when it passed, else the reason."""
+    if not surface.test_one:
+        return f"no `test_one` command on the `{surface.name}` surface in {pc.CONFIG} to run it: {path}"
+    out = subprocess.run(pc.expand(surface.test_one, file=path, name=name), cwd=root, capture_output=True, text=True)
+    if out.returncode != 0:
+        return "failed:\n" + "\n".join((out.stdout + out.stderr).splitlines()[-20:])
+    return None
+
+
+def run_test(root: Path, surface, path: str, name: str) -> str | None:
+    """Run one acceptance test by its surface's kind. None when it passed, else the reason."""
+    kind = kind_of(surface, path)
+    if kind == "script":
+        return run_script_test(root, surface, path, name)
+    return run_go_test(root, path, name) if kind == "go" else run_ts_test(root, path, name)
+
+
 def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> list[str]:
     spec = root / "docs" / "specs" / f"{slug}.md"
     runs = root / ".runs" / slug  # the plans: `pipeline.py` → `runs_of`
@@ -587,9 +654,15 @@ def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> l
         if not test_file.is_file():
             problems.append(f"{slug} {sid}: acceptance test file not found: {path}")
             continue
+        surface = test_surface(root, path)
+        if surface is False and re.search(r"\.(?:go|tsx?|jsx?)$", path):
+            surface = None  # a built-in language's test outside every surface's globs: judged by suffix, as before
+        if surface is False:
+            problems.append(f"{slug} {sid}: {path} is not a test file of any surface in {pc.CONFIG} "
+                            "(its `tests` globs)")
+            continue
         src = test_file.read_text()
-        exists = go_test_exists(src, name) if path.endswith(".go") else ts_test_exists(src, name)
-        if not exists:
+        if not test_exists(surface, path, src, name):
             problems.append(f"{slug} {sid}: `{name}` not found in {path}")
             continue
         plan = runs / f"{sid}.md"
@@ -607,7 +680,7 @@ def check(root: Path, slug: str, run: bool = False, approval: bool = False) -> l
                 f"`{planned.group(1)}` `{planned.group(2)}`"
             )
         if run:
-            reason = run_go_test(root, path, name) if path.endswith(".go") else run_ts_test(root, path, name)
+            reason = run_test(root, surface, path, name)
             if reason:
                 problems.append(f"{slug} {sid}: acceptance test `{name}` {reason}")
     return problems

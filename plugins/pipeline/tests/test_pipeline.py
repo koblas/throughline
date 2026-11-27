@@ -148,7 +148,9 @@ class Feature(unittest.TestCase):
         # The phase checks `next` runs on a built scenario: recorded and passing, never go or npm.
         self.phase_calls, self.phase_says = [], []
         self.real_phase = pl.RUN_PHASE
-        pl.RUN_PHASE = lambda root, base, go, ts: (self.phase_calls.append((base, go, ts))
+        # Recorded as (base, the go surface's packages, the frontend surface's workspaces).
+        pl.RUN_PHASE = lambda root, base, targets: (self.phase_calls.append((base, targets.get("go", []),
+                                                                             targets.get("frontend", [])))
                                                    or (self.phase_says.pop(0) if self.phase_says else (True, "")))
         (pl.runs_of(self.spec_dir) / "METRICS.md").write_text(METRICS)
         git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
