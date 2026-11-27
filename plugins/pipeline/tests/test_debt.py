@@ -57,6 +57,43 @@ class DebtTest(unittest.TestCase):
         self.assertEqual([d["title"] for d in pl.open_drafts(pl.spec_folder(self.root, "invites"))],
                          ["First", "Second"])
 
+    def spec_with(self, links):
+        (self.root / "docs" / "specs" / "invites.md").write_text(f"# Feature: Invites\n\n## Links\n\n{links}\n")
+
+    def test_a_debt_ends_with_the_feature_issue_it_was_found_in(self):
+        self.spec_with("- Feature issue: #41")
+
+        self.cli("invites", "Retry the mailer", "--scenario", "SCENARIO-03")
+
+        body = pl.open_drafts(pl.spec_folder(self.root, "invites"))[0]["body"]
+        self.assertIn("Found in SCENARIO-03 of `invites`, not fixed in it.", body)
+        self.assertTrue(body.endswith("Found in #41"), body)
+
+    def test_a_feature_issue_adopted_from_an_idea_is_the_one_named(self):
+        self.spec_with("- Feature issue: #17 (adopted)")
+
+        self.cli("invites", "Retry the mailer")
+
+        self.assertTrue(pl.open_drafts(pl.spec_folder(self.root, "invites"))[0]["body"].endswith("Found in #17"))
+
+    def test_with_no_feature_issue_number_yet_the_draft_keeps_its_text(self):
+        self.spec_with("- Feature issue: ~")
+
+        self.cli("invites", "Retry the mailer")
+
+        body = pl.open_drafts(pl.spec_folder(self.root, "invites"))[0]["body"]
+        self.assertTrue(body.endswith("Found while building `invites`, not fixed in it."), body)
+
+    def test_review_findings_drafted_as_issues_end_with_the_feature_issue(self):
+        self.spec_with("- Feature issue: #41")
+        found = [{"text": ["[MINOR] a.go:3 — name it"], "reviewers": ["test-reviewer"], "sev": "MINOR"}]
+
+        pl.draft_issues(pl.spec_folder(self.root, "invites"), "invites", found, "REVIEW-01")
+
+        body = pl.open_drafts(pl.spec_folder(self.root, "invites"))[0]["body"]
+        self.assertIn("Found by test-reviewer in REVIEW-01 of `invites` (MINOR).", body)
+        self.assertTrue(body.endswith("Found in #41"), body)
+
     def test_a_blank_title_is_refused_and_drafts_nothing(self):
         code, _, err = self.cli("invites", "  ")
 

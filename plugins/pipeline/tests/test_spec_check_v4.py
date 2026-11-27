@@ -1,6 +1,7 @@
 """spec-check on a v4 feature spec: the four sections, the acceptance-test line, copy coverage in the product spec."""
 import importlib.util
 import io
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -10,7 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import repo_fixture  # noqa: E402 — the repo config a scratch repo needs
 
-from v4_fixture import AREA, SPEC
+from v4_fixture import AREA, SPEC, with_issues
 
 HERE = Path(__file__).resolve().parent.parent / "scripts"
 loader = importlib.util.spec_from_file_location("spec_check", HERE / "spec-check.py")
@@ -167,6 +168,110 @@ class V4Test(unittest.TestCase):
 
         self.assertEqual(len(self.problems(approval=False)), 1)
         self.assertIn("no `<!-- spec-check: v4 -->` marker", self.problems(approval=False)[0])
+
+
+class ApprovalRecordTest(unittest.TestCase):
+    """A spec that passed `--approval` says so in its intent, with a digest of the scenarios it passed on."""
+
+    def test_the_digest_ignores_what_the_pipeline_writes_into_the_scenarios_after_approval(self):
+        later = with_issues(SPEC).replace("Issue: #3\n", "Issue: ~\n").replace(
+            "Issue: #2\n", "Issue: #2 (unlinked)\nAcceptance test: `go/a_test.go` `TestShare`\n") + "\n\n"
+
+        self.assertEqual(sc.scenario_digest(later), sc.scenario_digest(SPEC))
+
+    def test_the_digest_changes_when_a_case_changes(self):
+        for old, new in (("the member sees the task", "the member sees nothing"), ("Size: small", "Size: large"),
+                         ("Owner stops sharing", "Owner stops all sharing"), ("`SharingService.Unshare`", "`SharingService.Drop`")):
+            with self.subTest(old=old):
+                self.assertNotEqual(sc.scenario_digest(SPEC.replace(old, new)), sc.scenario_digest(SPEC))
+
+    def test_stamping_writes_one_approved_line_into_the_intent(self):
+        once = sc.stamped(SPEC, "2026-11-27")
+        twice = sc.stamped(once.replace("the member sees the task", "the member sees it"), "2026-11-28")
+
+        self.assertIn(f"**Approved**: 2026-11-27 scenarios {sc.scenario_digest(SPEC)}", once)
+        intent = once.split("## Intent and out of scope")[1].split("## Decisions")[0]
+        self.assertIn("**Approved**: 2026-11-27", intent)
+        self.assertEqual(twice.count("**Approved**:"), 1)
+        self.assertIn("**Approved**: 2026-11-28", twice)
+
+    def test_a_stamped_spec_still_passes_the_format_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs" / "specs").mkdir(parents=True)
+            (root / "docs" / "product").mkdir(parents=True)
+            (root / "docs" / "product" / "sharing.md").write_text(AREA)
+            repo_fixture.install(root, profile=False)
+            (root / "docs" / "specs" / "share.md").write_text(sc.stamped(SPEC, "2026-11-27"))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(sc.check(root, "share", approval=True), [])
+
+    def test_a_spec_never_approved_is_a_problem(self):
+        found = sc.approval_problems(SPEC)
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("no `**Approved**:` line", found[0])
+        self.assertIn("spec-check.py --approval", found[0])
+
+    def test_a_spec_whose_scenarios_changed_since_approval_is_a_problem(self):
+        found = sc.approval_problems(sc.stamped(SPEC, "2026-11-27").replace("a viewer tries", "an editor tries"))
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("the scenarios changed since they were approved on 2026-11-27", found[0])
+
+    def test_an_approved_spec_with_its_issues_open_is_no_problem(self):
+        self.assertEqual(sc.approval_problems(with_issues(sc.stamped(SPEC, "2026-11-27"))), [])
+
+
+class ApprovalRunTest(unittest.TestCase):
+    """`spec-check.py --approval <slug>` stamps the spec when, and only when, every check passed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "docs" / "specs").mkdir(parents=True)
+        (self.root / "docs" / "product").mkdir(parents=True)
+        (self.root / "docs" / "product" / "sharing.md").write_text(AREA)
+        (self.root / "go" / "services" / "sharing").mkdir(parents=True)
+        (self.root / "go" / "services" / "sharing" / "share.go").write_text("package sharing\n\nfunc Share() {}\n")
+        repo_fixture.install(self.root, profile=False)
+        self.spec = self.root / "docs" / "specs" / "share.md"
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def approve(self, text, *flags):
+        self.spec.write_text(text)
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        return subprocess.run([str(HERE / "spec-check.py"), *flags, "share"], cwd=self.root, capture_output=True, text=True)
+
+    def test_a_passing_approval_run_stamps_the_spec(self):
+        out = self.approve(SPEC, "--approval")
+
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertRegex(self.spec.read_text(), rf"(?m)^\*\*Approved\*\*: \d{{4}}-\d{{2}}-\d{{2}} scenarios {sc.scenario_digest(SPEC)}$")
+        self.assertEqual(sc.approval_problems(self.spec.read_text()), [])
+
+    def test_a_failing_approval_run_writes_nothing(self):
+        bad = SPEC.replace("`permission_denied`", "`share_refused`")
+
+        self.assertEqual(self.approve(bad, "--approval").returncode, 1)
+        self.assertEqual(self.spec.read_text(), bad)
+
+    def test_a_run_without_approval_writes_nothing(self):
+        self.assertEqual(self.approve(SPEC).returncode, 0)
+        self.assertEqual(self.spec.read_text(), SPEC)
+
+    def test_a_symbol_the_cited_file_does_not_hold_fails_approval(self):
+        cites = SPEC.replace("— confirmed at the kickoff.\n", "— confirmed at the kickoff.\n- D-2 (2026-11-25): reuse "
+                             "`go/services/sharing/share.go` `ShareTask` — it exists.\n")
+
+        out = self.approve(cites, "--approval")
+
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("cites `ShareTask` in `go/services/sharing/share.go`, which does not contain it", out.stdout)
+        self.assertEqual(self.approve(cites.replace("`ShareTask`", "`Share`"), "--approval").returncode, 0)
 
 
 if __name__ == "__main__":

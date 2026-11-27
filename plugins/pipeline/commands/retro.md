@@ -45,7 +45,8 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py retro <slug> --reply <that file>
 It writes `docs/specs/<slug>.retro.md`. With a ledger, the feature's `METRICS.md` goes under
 `## Metrics`. Without one, `## Cost by stage` is set to `no ledger: single-session`. Then
 `retro-stats.py --fix` holds the rule candidates to the recurrence threshold, and any row it
-changes is printed. Where a `PIPELINE.json` exists, it is marked retro-done, so `next` does not ask
+changes is printed, and so is a due process review (`retro-stats.py --due`: the fifth Full-lane
+retro since the last one — `briefs/orchestration.md` step 10). Where a `PIPELINE.json` exists, it is marked retro-done, so `next` does not ask
 for the retro again.
 
 Report the escapes and the rule candidates to the user. The retro is committed with the feature,

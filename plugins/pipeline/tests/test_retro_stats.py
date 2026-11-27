@@ -130,5 +130,115 @@ class RetroStatsTest(unittest.TestCase):
         self.assertEqual(list(rs.load(self.root)), ["a"])
 
 
+
+class ProcessReviewTest(unittest.TestCase):
+    """A process review after every fifth Full-lane feature: each open rule candidate adopted or dropped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.specs = self.root / "docs" / "specs"
+        self.specs.mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def feature(self, slug, rcs=("guard-rows",), area="sharing"):
+        (self.specs / f"{slug}.md").write_text(f"# Feature: {slug}\n\n**Area**: {area}\n")
+        (self.specs / f"{slug}.retro.md").write_text(
+            retro(slug, [escape(1, "concurrency")], [[rc, "t", "c", "E1", "1", "watch"] for rc in rcs]))
+
+    def review(self, retros, rows, date="2026-11-20"):
+        table = "\n".join("| " + " | ".join(r) + " |" for r in rows)
+        path = self.root / "docs" / "process-reviews.md"
+        before = path.read_text() if path.is_file() else "# Process reviews\n"
+        path.write_text(before + f"\n## {date}\n\nRetros: {', '.join(retros)}\n\n| rc | decision | script | why |\n"
+                        f"| --- | --- | --- | --- |\n{table}\n")
+
+    def test_four_full_lane_retros_are_not_yet_a_review(self):
+        for slug in "abcd":
+            self.feature(slug)
+
+        self.assertIsNone(rs.review_due(self.root))
+
+    def test_the_fifth_full_lane_retro_makes_a_review_due(self):
+        for slug in "abcde":
+            self.feature(slug)
+
+        self.assertIn("process review is due: 5 Full-lane retros", rs.review_due(self.root))
+        self.assertIn("--process-review", rs.review_due(self.root))
+
+    def test_light_lane_retros_do_not_count(self):
+        for slug in "abcd":
+            self.feature(slug)
+        self.feature("e", area="none")
+
+        self.assertIsNone(rs.review_due(self.root))
+
+    def test_retros_a_complete_review_covered_are_not_counted_again(self):
+        for slug in "abcde":
+            self.feature(slug)
+        self.review("abcde", [["guard-rows", "dropped", "n/a", "one class, never recurred"]])
+        self.feature("f")
+
+        self.assertIsNone(rs.review_due(self.root))
+        self.assertEqual(rs.unreviewed(self.root), ["f"])
+
+    def test_the_listing_names_each_open_candidate_and_the_retros_it_came_from(self):
+        self.feature("a", rcs=("guard-rows", "lint-ids"))
+        self.feature("b", rcs=("guard-rows",))
+
+        code, text = rs.process_review(self.root, check=False)
+
+        self.assertEqual(code, 0)
+        self.assertIn("Retros: a, b", text)
+        self.assertIn("| guard-rows | adopted / dropped | <script, when adopted> | <why> |", text)
+        self.assertIn("- guard-rows — proposed in a, b", text)
+        self.assertIn("- lint-ids — proposed in a", text)
+
+    def test_a_review_with_an_undecided_candidate_is_refused_as_complete(self):
+        self.feature("a", rcs=("guard-rows", "lint-ids"))
+        self.review("a", [["guard-rows", "dropped", "n/a", "never recurred"]])
+
+        code, text = rs.process_review(self.root, check=True)
+
+        self.assertEqual(code, 1)
+        self.assertIn("lint-ids: undecided", text)
+        self.assertEqual(rs.unreviewed(self.root), ["a"])  # an incomplete review covers nothing
+
+    def test_an_adoption_must_name_its_script_and_every_decision_its_why(self):
+        self.feature("a", rcs=("guard-rows", "lint-ids"))
+        self.review("a", [["guard-rows", "adopted", "n/a", "recurred"], ["lint-ids", "dropped", "n/a", ""]])
+
+        code, text = rs.process_review(self.root, check=True)
+
+        self.assertEqual(code, 1)
+        self.assertIn("guard-rows: adopted names no script", text)
+        self.assertIn("lint-ids: no why", text)
+
+    def test_a_review_that_decides_every_candidate_is_complete(self):
+        self.feature("a", rcs=("guard-rows", "lint-ids"))
+        self.review("a", [["guard-rows", "adopted", "`scripts/check.py`", "recurred in three"],
+                          ["lint-ids", "dropped", "n/a", "a lint rule already covers it"]])
+
+        code, text = rs.process_review(self.root, check=True)
+
+        self.assertEqual(code, 0, text)
+        self.assertIn("2026-11-20 is complete: 2 candidate(s) decided", text)
+        self.assertEqual(rs.unreviewed(self.root), [])
+
+    def test_a_candidate_a_review_adopted_is_adopted_in_later_retros(self):
+        self.feature("a", rcs=("guard-rows",))
+        self.review("a", [["guard-rows", "adopted", "`scripts/check.py`", "recurred"]])
+
+        self.assertEqual({"guard-rows": "2026-11-20 in `scripts/check.py`"}, rs.adopted(self.root))
+
+    def test_no_review_file_and_no_retros_is_nothing_to_review(self):
+        code, text = rs.process_review(self.root, check=True)
+
+        self.assertEqual(code, 1)
+        self.assertIn("no process review recorded", text)
+
+
 if __name__ == "__main__":
     unittest.main()

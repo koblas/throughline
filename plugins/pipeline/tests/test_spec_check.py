@@ -121,5 +121,66 @@ class CitedPathsTest(unittest.TestCase):
         self.assertEqual(self.found("`papi/openapi_app.yaml:10`"), [])
 
 
+class CitedSymbolsTest(unittest.TestCase):
+    """--approval: a symbol cited beside its file (`path` `Name`, or `path:Name`) is in that file."""
+    TRACKED = ["go/services/oidcas/recover.go", "frontend/packages/auth/src/pages/auth/ActionPage.tsx"]
+    SOURCES = ("package oidcas\n\nconst passwordShortDesc = \"too short\"\n\nfunc doRecoverComplete() {}\n\n"
+               "func (s *Server) Verify() error { return nil }\n",
+               "export const REFUSAL_BY_REASON = {};\n")
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, self.root)
+        repo_fixture.install(self.root, profile=False)
+        for rel, src in zip(self.TRACKED, self.SOURCES):
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / rel).write_text(src)
+
+    def found(self, line):
+        return sc.cited_symbol_problems(self.root, line, self.TRACKED)
+
+    def test_a_symbol_in_its_cited_file_passes(self):
+        for line in ("`go/services/oidcas/recover.go` `doRecoverComplete`", "the guard at `recover.go:5` `doRecoverComplete`",
+                     "`O/recover.go` `passwordShortDesc`", "`ActionPage.tsx` `REFUSAL_BY_REASON`",
+                     "`recover.go:doRecoverComplete`", "`recover.go` `Server.Verify`"):
+            with self.subTest(line=line):
+                self.assertEqual(self.found(line), [])
+
+    def test_a_symbol_its_cited_file_does_not_hold_is_reported(self):
+        found = self.found("move `go/services/oidcas/recover.go` `doRecoverStart` first")
+
+        self.assertEqual(found, ["cites `doRecoverStart` in `go/services/oidcas/recover.go`, which does not contain it — "
+                                 "fix the citation, or say on its line that it is new"])
+
+    def test_the_path_colon_name_form_is_checked_too(self):
+        self.assertEqual(len(self.found("`recover.go:doRecoverStart`")), 1)
+
+    def test_a_dotted_name_is_judged_by_its_last_part(self):
+        self.assertEqual(len(self.found("`recover.go` `Server.Approve`")), 1)
+
+    def test_a_name_only_inside_a_longer_word_is_reported(self):
+        self.assertEqual(len(self.found("`recover.go` `doRecover`")), 1)
+
+    def test_a_line_that_calls_it_new_is_not_judged(self):
+        self.assertEqual(self.found("a new `recover.go` `doRecoverStart`"), [])
+
+    def test_case_rows_and_acceptance_lines_are_not_judged(self):
+        self.assertEqual(self.found("| 01.2 | error | a gone link | `recover.go` `ErrLinkGone` |"), [])
+        self.assertEqual(self.found("Acceptance test: `go/services/oidcas/recover.go` `TestGone`"), [])
+
+    def test_a_second_token_that_is_not_a_bare_name_is_not_judged(self):
+        for line in ("`ActionPage.tsx` `action page › shows it`", '`recover.go:3` `"too long"`', "`recover.go` `w=\"35%\"`",
+                     "`recover.go` `refresh.go`", "`recover.go` `:10,:20`"):
+            with self.subTest(line=line):
+                self.assertEqual(self.found(line), [])
+
+    def test_a_file_that_resolves_to_nothing_is_left_to_the_path_check(self):
+        self.assertEqual(self.found("`refresh.go` `Refresh`"), [])
+        self.assertEqual(self.found("`go/gen/user/v1/user.pb.go` `User`"), [])
+
+    def test_a_symbol_without_a_file_is_not_judged(self):
+        self.assertEqual(self.found("calls `Server.Approve` and `connect.CodeOf`"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
