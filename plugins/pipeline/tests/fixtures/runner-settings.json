@@ -33,7 +33,7 @@
   "permissions": {
     "allow": [
       "Read", "Glob", "Grep", "Write", "Edit", "MultiEdit", "LSP",
-      "Bash(go *)", "Bash(gofmt *)", "Bash(golangci-lint *)", "Bash(heph *)", "Bash(buf *)",
+      "Bash(go *)", "Bash(gofmt *)", "Bash(golangci-lint *)", "Bash(buildtool *)", "Bash(buf *)",
       "Bash(npm test*)", "Bash(npm run *)", "Bash(npm ci*)", "Bash(npx tsc *)", "Bash(npx vitest *)",
       "Bash(npx eslint *)", "Bash(npx prettier *)",
       "Bash(git diff *)", "Bash(git status*)", "Bash(git log *)", "Bash(git show *)", "Bash(git rev-parse *)",

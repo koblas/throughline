@@ -19,6 +19,7 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import fakes  # noqa: E402 — the toolchain stand-ins
 import repo_fixture  # noqa: E402
 
 SCRIPTS = HERE.parent / "scripts"
@@ -133,7 +134,7 @@ class ValidationTest(unittest.TestCase):
         self.assertIn("`feature_budget_usd` must be a number", self.refusal(config))
 
         config = repo_fixture.content_buddy()
-        config["surfaces"]["go"]["full_gates"][0]["command"] = "heph run //go:test-all"
+        config["surfaces"]["go"]["full_gates"][0]["command"] = "buildtool run //go:test-all"
         self.assertIn("`surfaces.go.full_gates[0].command` must be a non-empty list", self.refusal(config))
 
     def test_a_surface_with_a_ui_is_read_with_its_url_and_start_command(self):
@@ -343,8 +344,7 @@ class TwoRootsTest(unittest.TestCase):
         self.assertTrue(Path(named).is_file())
 
     def test_a_go_only_repo_drives_the_sibling_scripts_from_the_plugin(self):
-        if not shutil.which("go"):
-            self.skipTest("needs the Go toolchain")
+        fakes.install(self)
         repo = git_repo(self.scripts.parent.parent / "exemplar")
         repo_fixture.install(repo, copy.deepcopy(repo_fixture.EXEMPLAR), profile=False)
         (repo / "go.mod").write_text("module example.test/ex\n\ngo 1.22\n")

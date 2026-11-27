@@ -4,7 +4,6 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -231,12 +230,12 @@ class TimeoutTest(unittest.TestCase):
             self.assertEqual(rn.CHILDREN, set())
 
 
-@unittest.skipUnless(all(shutil.which(t) for t in ("go", "npx", "git", "heph")), "needs the devenv tools on PATH")
 class DetachedTest(tp.Feature):
     """The real program, started in the background against a CLI that never answers."""
 
     def setUp(self):
         super().setUp()
+        self.tools.add("buildtool")  # the fixture's `required_tools`; go and npx are faked already
         self.fake = Path(self.tmp.name) / "claude"
         self.fake.write_text("#!/bin/sh\nsleep 120\n")
         self.fake.chmod(0o755)

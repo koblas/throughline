@@ -107,8 +107,8 @@ Requires Python 3.12+. Run the tests from the repo root:
 python3 plugins/pipeline/tests/run.py
 ```
 
-Many tests drive `go`, `npx`, `git` and `ps` in scratch repos and need those on `PATH`. CI runs the
-whole suite on Python 3.12–3.15 with Go and Node installed, plus `ruff check` and
+The tests need only Python and `git`: every toolchain they touch is faked
+(`plugins/pipeline/tests/fakes.py`). CI runs the whole suite on Python 3.12–3.15, plus `ruff check` and
 `claude plugin validate .` (`.github/workflows/checks.yaml`). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

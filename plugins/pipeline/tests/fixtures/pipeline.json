@@ -7,10 +7,10 @@
   ],
   "feature_budget_usd": 75,
   "security_paths": "^(go/services/core/(identity|authn|oauthclient|oauthuser)/|go/services/publicapi/(oidcas|auth)/|go/services/publicapi/(bearer[^/]*|policy_authz)\\.go$|go/cmd/edge/oidcas/|go/libs/interceptors/|frontend/packages/auth/)",
-  "build_definitions": "(^|/)BUILD(\\.\\w+)?$|(^|/)\\.heph|^devenv\\.|^nix/|(^|/)buf(\\.gen|\\.work)?\\.yaml$",
+  "build_definitions": "(^|/)BUILD(\\.\\w+)?$|(^|/)\\.buildtool|^devenv\\.|^nix/|(^|/)buf(\\.gen|\\.work)?\\.yaml$",
   "requests": {
     "codegen": {
-      "command": ["heph", "run", "codegen", "//..."],
+      "command": ["buildtool", "run", "codegen", "//..."],
       "note": "After a codegen, grep both generated artifacts as `proto-regen-loop` says."
     }
   },
@@ -27,24 +27,24 @@
   "copy_sources": {
     "roots": [{"path": "go"}, {"path": "protos"}, {"path": "frontend/packages", "only_under": "src"}],
     "suffixes": [".go", ".proto", ".ts", ".tsx", ".js", ".jsx"],
-    "skip_dirs": ["node_modules", "gen", "genapi", "dist", "build", ".heph"]
+    "skip_dirs": ["node_modules", "gen", "genapi", "dist", "build", ".buildtool"]
   },
   "runner": {
-    "required_tools": ["go", "npx", "git", "heph"],
+    "required_tools": ["go", "npx", "git", "buildtool"],
     "docker_host": "~/.orbstack/run/docker.sock",
     "worktree_gomodcache": true,
     "failed_target_logs": {
       "failed": "target failed: //([^:\\s]+):([^@\\s]+)(@\\S*)?",
-      "log": ".heph/sandbox/{pkg}/__target_{name}_*/log.txt"
+      "log": ".buildtool/sandbox/{pkg}/__target_{name}_*/log.txt"
     },
     "resume_prefix": ["direnv", "exec", "."],
     "cache": {
-      "credential_env": "HEPH_CACHE_R2_AWS_ACCESS_KEY_ID",
-      "secret_env": ["HEPH_CACHE_R2_AWS_SECRET_ACCESS_KEY"],
-      "set_env": {"HEPH_PROFILES": "runner"},
-      "missing": "heph runs on this worktree's local cache only — slower, not wrong"
+      "credential_env": "BUILDTOOL_CACHE_R2_AWS_ACCESS_KEY_ID",
+      "secret_env": ["BUILDTOOL_CACHE_R2_AWS_SECRET_ACCESS_KEY"],
+      "set_env": {"BUILDTOOL_PROFILES": "runner"},
+      "missing": "buildtool runs on this worktree's local cache only — slower, not wrong"
     },
-    "unattended_note": "this is an unattended run. No command can run outside the sandbox, so do not ask for one; local ports, docker and the Go and npm registries are reachable from inside it. The full gates — `heph run //go:test-all`, `//frontend:test`, `//frontend:lint` — are run by the runner itself at the gate round: in Verify, run `{check} phase` on what you touched and say the full gate was left to the runner. `heph run codegen //...` cannot run here either: after editing a `.proto`, stop, and make the first line of your reply `RUNNER: codegen` — the runner regenerates and starts your run again; never hand-edit generated code. Write files with Edit or Write, never through the shell."
+    "unattended_note": "this is an unattended run. No command can run outside the sandbox, so do not ask for one; local ports, docker and the Go and npm registries are reachable from inside it. The full gates — `buildtool run //go:test-all`, `//frontend:test`, `//frontend:lint` — are run by the runner itself at the gate round: in Verify, run `{check} phase` on what you touched and say the full gate was left to the runner. `buildtool run codegen //...` cannot run here either: after editing a `.proto`, stop, and make the first line of your reply `RUNNER: codegen` — the runner regenerates and starts your run again; never hand-edit generated code. Write files with Edit or Write, never through the shell."
   },
   "surfaces": {
     "go": {
@@ -71,7 +71,7 @@
         {"name": "lint", "command": ["golangci-lint", "run", "{packages/...}"]},
         {"name": "test", "command": ["go", "test", "-count=1", "-v", "{cover}", "{packages}", "{run}"]}
       ],
-      "full_gates": [{"name": "//go:test-all", "command": ["heph", "run", "//go:test-all"]}],
+      "full_gates": [{"name": "//go:test-all", "command": ["buildtool", "run", "//go:test-all"]}],
       "race": {"scoped_packages": ["services/core/identity", "libs/passwordkit"]}
     },
     "frontend": {
@@ -105,8 +105,8 @@
       "test_one": ["npx", "vitest", "run", "{workspace_file}", "-t", "{pattern}"],
       "test_related": ["npx", "--no-install", "vitest", "related", "{workspace_file}", "--run"],
       "full_gates": [
-        {"name": "//frontend:test", "command": ["heph", "run", "//frontend:test"]},
-        {"name": "//frontend:lint", "command": ["heph", "run", "//frontend:lint"]}
+        {"name": "//frontend:test", "command": ["buildtool", "run", "//frontend:test"]},
+        {"name": "//frontend:lint", "command": ["buildtool", "run", "//frontend:lint"]}
       ]
     }
   }

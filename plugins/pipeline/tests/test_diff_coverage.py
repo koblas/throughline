@@ -3,8 +3,12 @@ import importlib.util
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakes  # noqa: E402 — the toolchain stand-ins
 
 HERE = Path(__file__).resolve().parent.parent / "scripts"
 loader = importlib.util.spec_from_file_location("diff_coverage", HERE / "diff-coverage.py")
@@ -239,11 +243,13 @@ class UncoveredTsTest(unittest.TestCase):
         self.assertIn("--coverage.reportsDirectory=/tmp/x", flags)
 
 
-@unittest.skipUnless(shutil.which("go"), "go not on PATH")
-class RealProfileTest(unittest.TestCase):
-    """The parser and the import-path mapping against what `go test -coverprofile` really writes."""
+class ProfileRunTest(unittest.TestCase):
+    """The parser and the import-path mapping end to end: `go test -coverprofile` writes the profile and
+    `go list` maps its import paths to directories (both faked: `fakes.py`)."""
 
-    def test_the_untested_arm_of_a_real_run_is_reported(self):
+    def test_the_untested_arm_of_a_run_is_reported(self):
+        go = fakes.install(self)
+        go.go_test_rule({}, profile=PROFILE)
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root)
         mod = root / "go"
@@ -259,7 +265,7 @@ class RealProfileTest(unittest.TestCase):
         found = dc.uncovered(root, prof.read_text(), dc.package_dirs(mod, ["./p"]), lambda rel: {5, 7})
 
         self.assertEqual(len(found), 1, found)
-        self.assertRegex(found[0], r"^go/p/p\.go:[45]-6:")  # the arm's start line depends on the Go version
+        self.assertRegex(found[0], r"^go/p/p\.go:5-6:")
 
 
 if __name__ == "__main__":

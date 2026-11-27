@@ -36,8 +36,8 @@ class RunnerTest(tp.Feature):
         self.calls = []
         self.said = []
         self.never_ticks = False
-        self.heph_calls = []
-        self.heph_results = {}
+        self.buildtool_calls = []
+        self.buildtool_results = {}
         self.changed = {"go": True, "frontend": False}
         self.changed_by_round = {}
         self.commands = []
@@ -76,7 +76,7 @@ class RunnerTest(tp.Feature):
         self.slept = []
         r.sleep = self.slept.append
         r.check_env = lambda: None
-        r.run_gate = self.fake_heph
+        r.run_gate = self.fake_buildtool
         r.run_command = self.fake_command
         return r
 
@@ -157,12 +157,12 @@ class RunnerTest(tp.Feature):
         self.commands.append(command)
         return subprocess.CompletedProcess(command, self.command_result[0], self.command_result[1], "")
 
-    def fake_heph(self, gate):
+    def fake_buildtool(self, gate):
         target = gate["name"]
-        self.heph_calls.append(target)
-        code, text = self.heph_results.get(target, [(0, "ok")])[0] if self.heph_results.get(target) else (0, "ok")
-        if len(self.heph_results.get(target, [])) > 1:
-            self.heph_results[target].pop(0)
+        self.buildtool_calls.append(target)
+        code, text = self.buildtool_results.get(target, [(0, "ok")])[0] if self.buildtool_results.get(target) else (0, "ok")
+        if len(self.buildtool_results.get(target, [])) > 1:
+            self.buildtool_results[target].pop(0)
         return subprocess.CompletedProcess([], code, text, "")
 
     def agents_run(self):
@@ -338,33 +338,33 @@ class RunnerTest(tp.Feature):
         self.assertEqual(self.env_check("")[0], 6)
 
     def test_a_full_gate_that_dies_with_no_finding_is_run_once_more_before_a_person(self):
-        self.heph_results = {"//go:test-all": [(1, "npm error Lifecycle script `test` failed"), (0, "ok")]}
+        self.buildtool_results = {"//go:test-all": [(1, "npm error Lifecycle script `test` failed"), (0, "ok")]}
 
         code, why = self.go()
 
         self.assertEqual((0, ""), (code, why))
-        self.assertEqual(2, self.heph_calls.count("//go:test-all"))
+        self.assertEqual(2, self.buildtool_calls.count("//go:test-all"))
 
     def test_a_full_gate_that_dies_twice_with_no_finding_stops_for_the_environment(self):
-        self.heph_results = {"//go:test-all": [(1, "npm error Lifecycle script"), (1, "npm error Lifecycle script")]}
+        self.buildtool_results = {"//go:test-all": [(1, "npm error Lifecycle script"), (1, "npm error Lifecycle script")]}
 
         code, why = self.go()
 
         self.assertEqual(6, code)
         self.assertIn("failed twice without reporting a failing test", why)
 
-    def test_reads_the_shared_heph_cache_only_with_credentials_for_it(self):
+    def test_reads_the_shared_buildtool_cache_only_with_credentials_for_it(self):
         r = self.runner()
         credential = rn.runner_settings(self.root)["cache"]["credential_env"]
         with mock.patch.dict(os.environ, {credential: "key"}):
-            os.environ.pop("HEPH_PROFILES", None)
+            os.environ.pop("BUILDTOOL_PROFILES", None)
             r.cache_env()
-            self.assertEqual(os.environ.get("HEPH_PROFILES"), "runner")
+            self.assertEqual(os.environ.get("BUILDTOOL_PROFILES"), "runner")
         with mock.patch.dict(os.environ, {}):
             os.environ.pop(credential, None)
-            os.environ.pop("HEPH_PROFILES", None)
+            os.environ.pop("BUILDTOOL_PROFILES", None)
             r.cache_env()
-            self.assertNotIn("HEPH_PROFILES", os.environ)
+            self.assertNotIn("BUILDTOOL_PROFILES", os.environ)
         self.assertTrue(any("local cache" in line for line in self.said))
 
     def test_stops_after_two_developer_runs_that_tick_nothing(self):
@@ -380,7 +380,7 @@ class RunnerTest(tp.Feature):
         code, _ = self.go()
 
         self.assertEqual(code, 0)
-        self.assertEqual(self.heph_calls, ["//go:test-all"])
+        self.assertEqual(self.buildtool_calls, ["//go:test-all"])
         self.assertIn("full gates run by the runner: //go:test-all", (self.run_dir / "METRICS.md").read_text())
 
     def test_runs_the_frontend_gates_when_the_round_changed_the_frontend(self):
@@ -388,23 +388,23 @@ class RunnerTest(tp.Feature):
 
         self.go()
 
-        self.assertEqual(self.heph_calls, ["//frontend:test", "//frontend:lint"])
+        self.assertEqual(self.buildtool_calls, ["//frontend:test", "//frontend:lint"])
 
     def test_a_failing_full_gate_is_a_blocker_and_is_run_again_after_the_fix(self):
-        self.heph_results = {"//go:test-all": [(1, "--- FAIL: Test_x\nFAIL\tgo/services/core/todo"), (0, "ok")]}
+        self.buildtool_results = {"//go:test-all": [(1, "--- FAIL: Test_x\nFAIL\tgo/services/core/todo"), (0, "ok")]}
         self.answers["regate"] = {"only": ["test-reviewer"], "reason": "the fix changed a test"}
 
         code, _ = self.go()
 
         self.assertEqual(code, 0)
         first = (self.run_dir / "REVIEW-01.md").read_text()
-        self.assertIn("`heph run //go:test-all` failed", first)
+        self.assertIn("`buildtool run //go:test-all` failed", first)
         self.assertIn("### Verdict: FAIL", first)
-        self.assertEqual(self.heph_calls, ["//go:test-all", "//go:test-all"])
+        self.assertEqual(self.buildtool_calls, ["//go:test-all", "//go:test-all"])
         self.assertIn("### Verdict: PASS", (self.run_dir / "REVIEW-02.md").read_text())
 
     def test_a_gate_that_failed_is_owed_until_green_whatever_the_fix_touched(self):
-        self.heph_results = {"//go:test-all": [(1, "--- FAIL: Test_x"), (0, "ok")]}
+        self.buildtool_results = {"//go:test-all": [(1, "--- FAIL: Test_x"), (0, "ok")]}
         self.changed_by_round = {2: {"go": False, "frontend": True}}
         self.fix_writes = True
         self.answers["regate"] = {"only": ["test-reviewer"], "reason": ""}
@@ -412,12 +412,12 @@ class RunnerTest(tp.Feature):
         code, _ = self.go()
 
         self.assertEqual(code, 0)
-        self.assertEqual(self.heph_calls, ["//go:test-all", "//go:test-all", "//frontend:test", "//frontend:lint"])
+        self.assertEqual(self.buildtool_calls, ["//go:test-all", "//go:test-all", "//frontend:test", "//frontend:lint"])
         self.assertIn("### Verdict: FAIL", (self.run_dir / "REVIEW-01.md").read_text())
         self.assertIn("### Verdict: PASS", (self.run_dir / "REVIEW-02.md").read_text())
 
     def test_a_round_that_fails_after_the_one_fix_pass_hands_back_with_it_drafted(self):
-        self.heph_results = {"//go:test-all": [(1, "--- FAIL: Test_x"), (1, "--- FAIL: Test_x")]}
+        self.buildtool_results = {"//go:test-all": [(1, "--- FAIL: Test_x"), (1, "--- FAIL: Test_x")]}
         self.fix_writes = True
         self.answers["regate"] = {"only": ["test-reviewer"], "reason": ""}
 
@@ -426,7 +426,7 @@ class RunnerTest(tp.Feature):
         self.assertEqual(code, 2)
         self.assertIn("no third round", why)
         self.assertEqual(sum(1 for c in self.calls if "run: gate-fix" in c["prompt"]), 1)
-        self.assertIn("heph run //go:test-all", pl.issues_file(self.spec_dir).read_text())
+        self.assertIn("buildtool run //go:test-all", pl.issues_file(self.spec_dir).read_text())
 
     def test_a_race_that_failed_is_run_again_even_when_the_fix_touched_no_go_production(self):
         self.race_code = 1
@@ -454,8 +454,8 @@ class RunnerTest(tp.Feature):
                       "timed out after 2700s"):
             self.assertIsNone(rn.GATE_FAILED_RE.search(infra))
 
-    def test_a_failure_inside_hephs_log_gutter_is_a_finding(self):
-        # heph prints a failed target's log tail inside a numbered gutter.
+    def test_a_failure_inside_buildtools_log_gutter_is_a_finding(self):
+        # buildtool prints a failed target's log tail inside a numbered gutter.
         for line in ("  889 │ --- FAIL: Test_no_server_error_is_built (0.00s)", "  898 │ FAIL",
                      "   12 │ services/core/todo/list.go:12:5: undefined: x"):
             self.assertTrue(rn.GATE_FAILED_RE.search(line), line)
@@ -465,8 +465,8 @@ class RunnerTest(tp.Feature):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tp.repo_fixture.install(root, profile=False)  # the config names where a failed target's log is
-            old = root / ".heph/sandbox/go/libs/x/__target_xtest_aaa/log.txt"
-            new = root / ".heph/sandbox/go/libs/x/__target_xtest_bbb/log.txt"
+            old = root / ".buildtool/sandbox/go/libs/x/__target_xtest_aaa/log.txt"
+            new = root / ".buildtool/sandbox/go/libs/x/__target_xtest_bbb/log.txt"
             for path in (old, new):
                 path.parent.mkdir(parents=True)
             old.write_text("--- FAIL: TestStale (0.00s)\n")
@@ -487,7 +487,7 @@ class RunnerTest(tp.Feature):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tp.repo_fixture.install(root, profile=False)
-            log = root / ".heph/sandbox/go/libs/x/__target_xtest_aaa/log.txt"
+            log = root / ".buildtool/sandbox/go/libs/x/__target_xtest_aaa/log.txt"
             log.parent.mkdir(parents=True)
             log.write_text("=== RUN   TestOld\n--- FAIL: TestOld (0.00s)\n")
             os.utime(log, (100, 100))
@@ -501,7 +501,7 @@ class RunnerTest(tp.Feature):
             self.assertEqual("", rn.failed_target_logs(Path(tmp), "driver not found: scratch"))
 
     def test_a_full_gate_that_cannot_run_is_an_environment_problem_not_a_finding(self):
-        self.heph_results = {"//go:test-all": [(1, "driver not found: scratch")]}
+        self.buildtool_results = {"//go:test-all": [(1, "driver not found: scratch")]}
 
         code, why = self.go()
 
@@ -517,7 +517,7 @@ class RunnerTest(tp.Feature):
         code, _ = self.go()
 
         self.assertEqual(code, 0)
-        self.assertEqual(self.heph_calls, ["//go:test-all"])
+        self.assertEqual(self.buildtool_calls, ["//go:test-all"])
 
     def test_every_brief_says_what_an_unattended_run_cannot_do(self):
         self.go()
@@ -533,10 +533,10 @@ class RunnerTest(tp.Feature):
         code, _ = self.go()
 
         self.assertEqual(code, 0)
-        self.assertEqual(self.commands, [["heph", "run", "codegen", "//..."]])
+        self.assertEqual(self.commands, [["buildtool", "run", "codegen", "//..."]])
         builds = [c for c in self.calls if "run: build" in c["prompt"]]
         second = Path(re.search(r"Brief: (\S+)", builds[1]["prompt"]).group(1)).read_text()
-        self.assertIn("`heph run codegen //...` was run for you. Result: codegen ok", second)
+        self.assertIn("`buildtool run codegen //...` was run for you. Result: codegen ok", second)
 
     def test_a_failed_codegen_goes_back_to_the_developer_with_its_output(self):
         self.asks_codegen = 1
@@ -795,7 +795,7 @@ class RunnerTest(tp.Feature):
         r = self.runner()
 
         def no_tools():
-            raise rn.Stop(6, "heph not on PATH")
+            raise rn.Stop(6, "buildtool not on PATH")
 
         r.check_env = no_tools
 
@@ -843,7 +843,7 @@ class RunnerTest(tp.Feature):
         runs = [json.loads(l) for l in (self.run_dir / "RUNS.jsonl").read_text().splitlines()]
         self.assertEqual({r.get("settings") for r in runs}, {"runner-profile"})
 
-    def test_an_agent_is_handed_neither_the_heph_profile_nor_the_cache_key(self):
+    def test_an_agent_is_handed_neither_the_buildtool_profile_nor_the_cache_key(self):
         seen = {}
 
         class Proc:
@@ -857,11 +857,11 @@ class RunnerTest(tp.Feature):
 
         opts = self.opts(settings="/x/settings.json", run_timeout=60)
         credential = rn.runner_settings(self.root)["cache"]["credential_env"]
-        with mock.patch.dict(os.environ, {"HEPH_PROFILES": "runner", credential: "key", "PATH": "/bin"}), \
+        with mock.patch.dict(os.environ, {"BUILDTOOL_PROFILES": "runner", credential: "key", "PATH": "/bin"}), \
                 mock.patch.object(rn.subprocess, "Popen", Proc):
             rn.claude(self.root, "hi", opts)
 
-        self.assertNotIn("HEPH_PROFILES", seen)
+        self.assertNotIn("BUILDTOOL_PROFILES", seen)
         self.assertNotIn(credential, seen)
         self.assertEqual(seen["PATH"], "/bin")
 
@@ -926,7 +926,7 @@ class RunnerTest(tp.Feature):
 
 class HelpersTest(unittest.TestCase):
     def test_says_which_denials_are_the_sandbox_doing_its_job(self):
-        outside = '[unsandboxed] Bash {"command": "heph run //go:test-all 2>&1 | tail"}'
+        outside = '[unsandboxed] Bash {"command": "buildtool run //go:test-all 2>&1 | tail"}'
         shell_write = 'Bash {"command": "cat >> a_test.go <<\'EOF\'\\nfunc x() {}"}'
         gap = 'Bash {"command": "echo $X | jq \'.a > 1\'"}'
 

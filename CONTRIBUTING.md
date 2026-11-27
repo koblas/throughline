@@ -37,7 +37,9 @@ Examples: `feat(runner): resume a stopped run`, `fix(spec-check): accept v4 head
 You need:
 
 - Python **3.12 or newer** (the scripts use 3.12 f-string syntax). No third-party packages.
-- `git`, `go` and Node (`npx`) on `PATH`: many tests drive them in scratch repos.
+- `git` on `PATH`: tests drive it in scratch repos. Nothing else: the tests fake every toolchain
+  they touch (`go`, `npx`, `golangci-lint` …) with `plugins/pipeline/tests/fakes.py`, so they mean
+  the same with or without Go and Node installed.
 - Optionally [ruff](https://docs.astral.sh/ruff/) and the
   [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) for the lint and validate checks.
 
@@ -68,15 +70,14 @@ To try your working copy in Claude Code, add it as a local marketplace:
 /plugin install pipeline@throughline
 ```
 
-### Tests that skip
+### Faking the toolchains
 
-Tests skip themselves when what they check is not there:
-
-- **Without `heph` on `PATH` (5):** `test_runner_status.DetachedTest` starts the real runner against
-  the fixture repo, whose `required_tools` include `heph` (content_buddy's build tool). CI does not
-  install it, so CI reports 5 skips; with `heph` installed you get none.
-- Tests that need `go` (`test_diff_coverage`, `test_mutation_sample`) skip without it. CI installs
-  Go, so they run there.
+No test may run a real `go`, `npx`, `vitest` or linter, or skip for want of one. A test that drives a
+script which calls one starts with `fakes.install(self)`: the faked tools go first on `PATH` for that
+test and its subprocesses. `go list` is read from the package directories as Go would read them, and
+`go test` exits as the rules the test sets (`go_test_rule`) say, after any `-overlay`. Every call is
+logged for the test to assert on (`calls()`). The suite passes with no skips on a machine with only
+Python and git.
 
 ## Lint
 
