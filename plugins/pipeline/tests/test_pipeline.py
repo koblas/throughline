@@ -4,6 +4,7 @@ Run: python3 -m unittest discover -s plugins/pipeline/tests
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -222,6 +223,38 @@ class NextTest(Feature):
 
         self.assertEqual(code, 2)
         self.assertIn("REFUSED", out)
+
+    def spawned(self):
+        """Every command `next` runs through `subprocess.run`, as it ran them."""
+        calls, run = [], pl.subprocess.run
+
+        def record(cmd, *a, **kw):
+            calls.append([str(c) for c in cmd])
+            return run(cmd, *a, **kw)
+        pl.subprocess.run = record
+        self.addCleanup(setattr, pl.subprocess, "run", run)
+        return calls
+
+    def test_puts_back_a_line_a_killed_mutation_run_left_mutated(self):
+        target = self.root / "frontend" / "a.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const on = false;\n")
+        pl.mutation_journal(self.root).write_text(json.dumps({
+            "file": "frontend/a.ts", "original": "export const on = true;\n",
+            "mutated": hashlib.sha256(b"export const on = false;\n").hexdigest(), "pid": 2 ** 22 + 12345}))
+
+        _, out = self.next()
+
+        self.assertIn("restored `frontend/a.ts`", out)
+        self.assertEqual(target.read_text(), "export const on = true;\n")
+        self.assertFalse(pl.mutation_journal(self.root).exists())
+
+    def test_starts_no_mutation_repair_when_no_run_left_a_journal(self):
+        calls = self.spawned()
+
+        self.next()
+
+        self.assertFalse([c for c in calls if any(a.endswith("mutation-sample.py") for a in c)], calls)
 
     def test_asks_for_an_architect_when_a_normal_scenario_has_no_plan(self):
         code, out = self.next()

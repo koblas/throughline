@@ -101,4 +101,5 @@ jobs:
       - name: Unit tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python -m unittest discover -v -s plugins/pipeline/tests
+        # Sharded over one worker process per CPU; a failing shard prints its whole output.
+        run: python plugins/pipeline/tests/run.py
