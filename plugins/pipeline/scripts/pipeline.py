@@ -25,6 +25,9 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
                                     the feature's retro outside `next` (`/pipeline:retro`): without --reply,
                                     the pipeline-reviewer brief — from the ledger when .runs/<slug>/ has one,
                                     else from the feature's merged PRs on GitHub; with it, writes the retro
+  debt <slug> TITLE [--body T] [--label L ...] [--scenario SCENARIO-NN]
+                                    a debt found while building and not fixed: an issue draft in
+                                    .runs/<slug>/ISSUES.md at once, filed with file-issues on the user's yes
   batch <slug> [--units A,B | --from-file F] [--done UNIT --tests CMD] [--found TITLE [--body T] [--label L ...]]
                                     the Direct lane: a mechanical migration's checklist, .runs/<slug>/BATCH.md,
                                     one unit per package; prints the next unit (exit 3 when all are done)
@@ -927,6 +930,26 @@ def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
         "fix pass may have closed a finding drafted from an earlier round, so check each first.")
     path.write_text(text + "\n\n" + "\n\n".join(blocks) + "\n")
     return path
+
+
+def debt(root: Path, slug: str, title: str, body: str = "", labels: list[str] | None = None,
+         scenario: str | None = None) -> int:
+    """Draft a debt found while building `slug` and not fixed as an issue in its ISSUES.md.
+
+    Debt goes here the moment it is found, never into STATE.md: `.runs/` is gitignored, so a debt
+    kept only there is lost with the run. The draft reaches GitHub on the user's yes (`file-issues`);
+    a later scenario that closes it first deletes the block.
+    """
+    if not title.strip():
+        print("debt: needs the issue's title", file=sys.stderr)
+        return 2
+    where = f"in {scenario} of `{slug}`" if scenario else f"while building `{slug}`"
+    issues = append_drafts(spec_folder(root, slug), slug, [
+        f"## [ ] {title.strip()}\n\nlabels: {', '.join(labels or ['debt'])}\n\n"
+        + (body.strip() + "\n\n" if body.strip() else "") + f"Found {where}, not fixed in it."])
+    print(f"drafted `{title.strip()}` in {issues} — filed with `{script('pipeline.py')} file-issues {slug} --yes` "
+          "on the user's yes")
+    return 0
 
 
 def open_drafts(spec_dir: Path) -> list[dict]:
@@ -2208,6 +2231,12 @@ def build_parser() -> argparse.ArgumentParser:
     oi.add_argument("slug")
     oi.add_argument("--pause", type=float, default=0.0, metavar="SECONDS", help="wait between issues")
     oi.add_argument("--yes", action="store_true", help="the user approved the spec: create what is listed")
+    d = sub.add_parser("debt", help="a debt found while building and not fixed: an issue draft in ISSUES.md")
+    d.add_argument("slug")
+    d.add_argument("title", help="the issue's title")
+    d.add_argument("--body", default="", help="the drafted issue's body: what is owed and why it was left")
+    d.add_argument("--label", action="append", help="a label (repeatable; default debt)")
+    d.add_argument("--scenario", metavar="SCENARIO-NN", help="the scenario it was found in")
     b = sub.add_parser("batch", help="the Direct lane: a mechanical migration as a checklist, one unit per package")
     b.add_argument("slug")
     src = b.add_mutually_exclusive_group()
@@ -2300,6 +2329,8 @@ def _run(args: argparse.Namespace, root: Path) -> int:
             # One unit a line; a line that starts with `#` is a comment. A `#` inside a name is part of it.
             units = [l.strip() for l in src.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
         return batch(root, args.slug, units, args.done, args.tests, args.found, args.body, args.label)
+    if args.cmd == "debt":
+        return debt(root, args.slug, args.title, args.body, args.label, args.scenario)
     if args.cmd == "gate":
         return 0 if gate(root, args.slug, args.round, args.base, args.pre_fix, args.only, args.exclude) else 2
     if args.cmd == "retro":

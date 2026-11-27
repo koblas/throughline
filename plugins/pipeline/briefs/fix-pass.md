@@ -10,7 +10,7 @@ For the `developer` in fix mode and the orchestrator writing a fix-pass brief. R
 A fix pass applies BLOCKER and MAJOR findings. A MINOR is folded only when it sits in a file
 a blocking fix already edits; cheap folds are docs, renames, test additions and extractions
 that keep behaviour identical. **A fold that adds runtime behaviour is not
-cheap.** New behaviour either goes to STATE.md `## Open debts`,
+cheap.** New behaviour either becomes an issue draft (`scripts/pipeline.py debt <slug> "<title>"`),
 or is folded with its tests planned in the same brief, named per branch. **Moving a check
 from one function to another is a behaviour change** for every caller that ran it: each
 such caller needs a row that fails without the check (for advice, the round-trip in
