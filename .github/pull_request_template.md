@@ -7,7 +7,7 @@ Conventional Commit, e.g. `feat(runner): resume a stopped run` or `fix: ...`. Se
 
 ## How it was tested
 
-- [ ] `python3 -m unittest discover -s plugins/pipeline/tests` passes
+- [ ] `python3 plugins/pipeline/tests/run.py` passes
 - [ ] `ruff check .` passes
 - [ ] `claude plugin validate .` passes (if manifests, agents, commands, hooks or skills changed)
 
