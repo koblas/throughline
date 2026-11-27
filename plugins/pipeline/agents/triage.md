@@ -136,6 +136,8 @@ The last line of every report. It decides how much process the work pays for:
 Pick the smallest lane the evidence supports. A change that adds or alters a proto field, a
 route, a screen or copy is Full — only removing a surface nothing uses any more stays Direct.
 Unsure between two → name the larger and say what would settle it in Open questions.
+The lane becomes the issue's `lane:*` label, applied by the orchestrator with a shown command:
+`open-issues` labels a Full or Light feature issue, `claim N --lane direct` a Direct one.
 
 ## Rules
 

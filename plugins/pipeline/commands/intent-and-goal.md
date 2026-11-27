@@ -1,7 +1,7 @@
 ---
 description: The scoping procedure for any new feature or behavior change — triage the request against the codebase, confirm it at a three-line kickoff, rule its rules and copy into the product spec, approve scenario tables, and write the four-section feature spec with one sub-issue per scenario. The pipeline trigger (`briefs/workflow.md`) enters this automatically whenever the user asks for new or changed behavior; type it to force it.
 argument-hint: <optional — brief description of the feature; omit to use the conversation>
-allowed-tools: Read, Write, Glob, Grep, Skill, Agent, Bash(${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py *), Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py open-issues *)
+allowed-tools: Read, Write, Glob, Grep, Skill, Agent, Bash(${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py *), Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py open-issues *), Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py claim *)
 ---
 
 ## The request
@@ -21,6 +21,11 @@ them, refining scenarios with the user is conversation, not a gate.
 Pick the feature's slug now (kebab-case, `docs/specs/<slug>.md` must not exist). Run output goes
 to `.runs/<slug>/` (gitignored).
 
+**The issue it comes from.** Run `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py claim`: it lists the open,
+unassigned, unblocked issues (a read). The request names one (`#N`), or one listed is plainly it (a
+captured `idea`) → that is the feature's issue: the kickoff asks to claim it, and the spec adopts it
+as the feature issue (Phase 4) instead of opening a new one. None → `Issue: none` at the kickoff.
+
 ## Phase 0: Triage (before asking the user anything)
 
 Run **`triage`** on the request. Read-only. It returns affected services/protos/screens, prior art
@@ -34,7 +39,9 @@ Carry what triage could not answer from the code to the kickoff (Phase 1): do no
 
 **Its `Lane:` line decides the path** (`${CLAUDE_PLUGIN_ROOT}/briefs/workflow.md` → *Three lanes*):
 
-- **Direct** — this procedure ends here. Tell the user in one line, then do the work; a mechanical
+- **Direct** — this procedure ends here. Tell the user in one line, claim the issue the work comes
+  from on their go-ahead (`claim N --lane direct --yes`: assigns it and labels its lane), then do
+  the work; the PR closes it (`Closes #N`). A mechanical
   migration across many packages runs as a batch (`${CLAUDE_PLUGIN_ROOT}/briefs/orchestration.md` → *Direct
   lane: batches*).
 - **Light** — every phase below except Phase 2: no product-vision pass, and the spec says
@@ -52,6 +59,7 @@ drafted.** A wrong reading costs nothing to correct here.
 ## Kickoff — <slug>
 Understood as: <the goal, who it is for, what is out of scope — two or three lines>
 Open questions: <only what triage could not answer; "none" when none>
+Issue: #<N> <title> — claim it (assign it to you)? — or "none"
 Run: unattended in the background (`/pipeline:run-feature`) — recommended — or here in this session?
 ```
 
@@ -61,8 +69,8 @@ choice is still the user's.
 
 Then wait. Do not choose `Run` for them. Their answer becomes decision **D-1** of the feature spec
 (their corrected reading, dated) and its `**Run**:` line; `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py next` and the runner
-refuse a spec without either. Pass conditions and the feature budget are not asked: they are the
-defaults in `.claude/pipeline.json`.
+refuse a spec without either. Their yes to `Issue:` claims it: `claim N --yes` (shown, then run).
+Pass conditions and the feature budget are not asked: they are the defaults in `.claude/pipeline.json`.
 
 ## Phase 2: Product spec — the ruling
 
@@ -98,8 +106,9 @@ differently. Such a concern is not a stop of its own: put it to the user with th
 5. Put the scenarios, the product-spec diff (Full lane; a Light lane has none) and any
    product-vision concern to the user, and say that
    approval also writes to GitHub: it opens the feature issue, posts the triage brief on it as a
-   comment, opens one sub-issue per scenario, and lets the pipeline close each sub-issue itself as
-   its scenario is built. **Wait for
+   comment, opens one sub-issue per scenario, and labels the feature issue with its lane. Each
+   sub-issue is closed by the PR that builds its scenario: `next` writes its `Closes #N` into the
+   PR body draft, `.runs/<slug>/PR.md`. **Wait for
    explicit approval.** Everything after it auto-continues. Never write the spec from an offhand
    request without approval here.
 
@@ -193,7 +202,11 @@ names it — or `none`>
 ## Links
 
 - Product spec: [<area> → <section>](../product/<area>.md#<anchor>)
+- Feature issue: #<N> (adopted)      ← only when the request came from an issue (the kickoff's `Issue:`)
 ```
+
+The `Feature issue:` line is written at scoping only for an adopted issue; otherwise `open-issues`
+writes it when it opens one.
 
 Product rulings live in the product spec's own Decisions; this section holds the feature's scoping
 choices. Also create an empty `.runs/<slug>/METRICS.md` from the template in
@@ -216,7 +229,9 @@ Then, in order:
    user, and only on their yes is `--approval` re-run.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py open-issues <slug>` lists the feature issue, the triage comment and the
    sub-issues; `open-issues <slug> --yes` (the approval covers it) creates them, links each sub-issue
-   under the feature issue and writes the numbers into the spec. It is resumable: rerun it after a
+   under the feature issue and writes the numbers into the spec. The feature issue gets `lane:full`, or
+   `lane:light` for an `**Area**: none` spec. An adopted one (`#N (adopted)`) is not created again: it
+   is relabelled `idea` → `feature` plus its lane and areas, and the line becomes `#N`. It is resumable: rerun it after a
    failure; a `~` it reports is checked on GitHub by hand, never re-created. Each issue body has
    five parts, one line each: `Why:` (what is missing and for whom: the feature's from
    **Primary goal**, a scenario's from its title and `Action:`), `Design:` (a requirement id or the

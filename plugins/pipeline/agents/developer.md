@@ -123,7 +123,7 @@ Skills are files: `Read` each **once** at start, not per step — the plugin's (
    `Acceptance test:` line names it (`${CLAUDE_PLUGIN_ROOT}/briefs/build.md` → *Scenario traceability*): in
    `docs/specs/<feature-slug>.md`, add the line `` Acceptance test: `<file>` `<test>` `` to the
    scenario's own block, below its `Size:` and `Issue:` lines — leave its sub-issue alone, the
-   pipeline closes it. Then run `${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py <feature-slug>`; a problem on your
+   PR closes it (`next` writes its `Closes #N`). Then run `${CLAUDE_PLUGIN_ROOT}/scripts/spec-check.py <feature-slug>`; a problem on your
    scenario means the line is wrong — fix it. Problems on other scenarios are not yours;
    report them, do not fix them.
 6. **Last run only. Rewrite `.runs/<feature-slug>/STATE.md`** — see below. Do this

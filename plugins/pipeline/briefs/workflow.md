@@ -24,7 +24,9 @@ repo whose `.claude/pipeline.json` sets `"mode": "single-session"`, it leaves ou
   - **Direct** — named bug with a known fix, refactor/rename/cleanup with no behavior change,
     config, deps, CI, tooling, docs, the pipeline's own config and instructions: do the work, no spec. A mechanical
     migration across many packages runs as a batch (`scripts/pipeline.py batch`,
-    `briefs/orchestration.md` → *Direct lane: batches*).
+    `briefs/orchestration.md` → *Direct lane: batches*). Work starts by claiming its issue:
+    `scripts/pipeline.py claim` lists the open, unassigned, unblocked ones; on the user's go-ahead,
+    `claim N --lane direct --yes` assigns it and labels its lane. The PR closes it (`Closes #N`).
 
   Not a lane: questions about how existing behavior works — answer them. Work already covered
   by a spec under `docs/specs/` — resume it at its first unbuilt scenario (a spec not yet

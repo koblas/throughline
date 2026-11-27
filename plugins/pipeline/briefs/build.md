@@ -130,8 +130,9 @@ Acceptance test: `go/services/core/account/provision_test.go` `TestFirstProvisio
 
 A frontend test is named by file and the full `describe › it` title:
 `` `frontend/packages/app/src/pages/members.test.tsx` `members page › lists every member` ``.
-The line holds nothing else and does not wrap. The developer does not close the scenario's
-sub-issue: `pipeline.py next` closes it once it records the scenario done.
+The line holds nothing else and does not wrap. Nobody closes the scenario's
+sub-issue by hand: once `pipeline.py next` records the scenario done it writes `Closes #N` into the PR
+body draft (`.runs/<slug>/PR.md`), and the PR closes it on merge.
 
 **Every approved case is planned.** A scenario is a table of cases (`intent-and-goal` →
 *Scenario format*). The acceptance test proves its `happy` case; every other case is a named

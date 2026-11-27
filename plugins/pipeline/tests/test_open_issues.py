@@ -34,6 +34,7 @@ case "$1 $2" in
     n=$(( $(cat "$GH_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$GH_COUNT"
     echo "https://github.com/o/r/issues/$n" ;;
   "issue comment") exit 0 ;;
+  "issue edit") [ -n "$GH_EDIT_FAIL" ] && { echo "HTTP 404" >&2; exit 1; }; exit 0 ;;
   "api -X") [ -n "$GH_LINK_FAIL" ] && { echo "HTTP 422" >&2; exit 1; }; exit 0 ;;
   "api "*) echo "$2" | sed 's#.*/##; s#^#900#' ;;
 esac
@@ -50,7 +51,8 @@ class OpenIssuesTest(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.log = self.dir / "gh.log"
         env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GH_LOG": str(self.log),
-               "GH_COUNT": str(self.dir / "count"), "GH_FAIL_TITLE": "", "GH_SILENT_TITLE": "", "GH_LINK_FAIL": ""}
+               "GH_COUNT": str(self.dir / "count"), "GH_FAIL_TITLE": "", "GH_SILENT_TITLE": "", "GH_LINK_FAIL": "",
+               "GH_EDIT_FAIL": ""}
         self.old_env = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.root = self.dir / "repo"
@@ -86,7 +88,7 @@ class OpenIssuesTest(unittest.TestCase):
         code, out, _ = self.run_open(yes=False)
 
         self.assertEqual(code, 0)
-        self.assertIn("- [feature, area:sharing] Share a task", out)
+        self.assertIn("- [feature, lane:full, area:sharing] Share a task", out)
         self.assertIn("- [scenario, area:sharing] SCENARIO-01 — Owner shares a task", out)
         self.assertIn("triage.md", out)
         self.assertEqual(self.calls(), [])
@@ -100,7 +102,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertIn("- Triage brief: posted on #1", text)
         self.assertIn("Size: large\nIssue: #2\n", text)
         self.assertIn("Size: small\nIssue: #3\n", text)
-        self.assertIn("--label feature --label area:sharing", self.creates()[0])
+        self.assertIn("--label feature --label lane:full --label area:sharing", self.creates()[0])
         self.assertIn("--label scenario --label area:sharing", self.creates()[1])
         self.assertIn("issue comment 1 --body-file", "\n".join(self.calls()))
         self.assertIn("api -X POST repos/{owner}/{repo}/issues/1/sub_issues -F sub_issue_id=9002", self.calls())
@@ -175,11 +177,65 @@ class OpenIssuesTest(unittest.TestCase):
         _, out, _ = self.run_open(yes=False)
         code, _, err = self.run_open()
 
-        self.assertIn("- [feature] Share a task", out)
+        self.assertIn("- [feature, lane:light] Share a task", out)
         self.assertIn("- [scenario] SCENARIO-01 — Owner shares a task", out)
         self.assertEqual(code, 0, err)
         self.assertTrue(self.creates())
         self.assertFalse(any("area:" in c for c in self.creates()), self.creates())
+
+    def test_a_light_spec_opens_its_feature_issue_labelled_lane_light(self):
+        self.spec.write_text(SPEC.replace("**Area**: sharing", "**Area**: none"))
+
+        self.run_open()
+
+        self.assertIn("--label feature --label lane:light", self.creates()[0])
+        self.assertNotIn("lane:", self.creates()[1])
+
+    def adopt(self, number=17):
+        """The request came from captured issue #17: the spec records it as the feature issue."""
+        self.spec.write_text(SPEC + f"- Feature issue: #{number} (adopted)\n")
+
+    def edits(self):
+        return [c for c in self.calls() if c.startswith("issue edit")]
+
+    def test_an_adopted_issue_is_listed_to_relabel_not_to_create(self):
+        self.adopt()
+
+        code, out, _ = self.run_open(yes=False)
+
+        self.assertEqual(code, 0)
+        self.assertIn("- relabel #17: idea → feature, lane:full, area:sharing", out)
+        self.assertNotIn("] Share a task", out)
+        self.assertEqual(self.calls(), [])
+
+    def test_yes_relabels_the_adopted_issue_and_opens_the_scenarios_under_it(self):
+        self.adopt()
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.edits(), ["issue edit 17 --remove-label idea --add-label feature --add-label lane:full "
+                                        "--add-label area:sharing"])
+        self.assertEqual(len(self.creates()), 2)  # the two scenarios; no feature issue
+        text = self.spec.read_text()
+        self.assertIn("- Feature issue: #17\n", text)
+        self.assertNotIn("(adopted)", text)
+        self.assertIn("issue comment 17 --body-file", "\n".join(self.calls()))
+        self.assertIn("api -X POST repos/{owner}/{repo}/issues/17/sub_issues -F sub_issue_id=9001", self.calls())
+
+    def test_a_relabel_that_fails_keeps_the_adoption_and_the_rerun_tries_it_again(self):
+        self.adopt()
+        os.environ["GH_EDIT_FAIL"] = "1"
+
+        code, _, err = self.run_open()
+
+        self.assertEqual(code, 1)
+        self.assertIn("gh issue edit failed on #17", err)
+        self.assertIn("- Feature issue: #17 (adopted)", self.spec.read_text())
+        os.environ["GH_EDIT_FAIL"] = ""
+        self.assertEqual(self.run_open()[0], 0)
+        self.assertEqual(len(self.edits()), 2)
+        self.assertFalse(any("issue create --title Share a task" in c for c in self.creates()))
 
     def test_a_spec_without_the_v4_marker_is_not_opened(self):
         self.spec.write_text("# Feature: demo\n")
