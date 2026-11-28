@@ -31,10 +31,10 @@ transcripts, so the orchestrator never retypes a reply — and writes the bookke
                                     the feature's retro outside `next` (`/pipeline:retro`): without --reply,
                                     the pipeline-reviewer brief — from the ledger when .runs/<slug>/ has one,
                                     else from the feature's merged PRs on GitHub; with it, writes the retro
-  debt <slug> TITLE [--body T] [--label L ...] [--scenario SCENARIO-NN]
-                                    a debt found while building and not fixed: an issue draft in
+  debt <slug> TITLE [--why T] [--trigger WHEN] [--approach T] [--done-when T] [--label L ...] [--scenario SCENARIO-NN]
+                                    a debt found while building and not fixed: a five-section issue draft in
                                     its ISSUES.md at once (in the git common dir, outside the worktree), filed with file-issues on the user's yes
-  batch <slug> [--units A,B | --from-file F] [--done UNIT --tests CMD] [--found TITLE [--body T] [--label L ...]]
+  batch <slug> [--units A,B | --from-file F] [--done UNIT --tests CMD] [--found TITLE [--why T] [--trigger WHEN] [--label L ...]]
                                     the Direct lane: a mechanical migration's checklist, .runs/<slug>/BATCH.md,
                                     one unit per package; prints the next unit (exit 3 when all are done)
   snap                            tree id of the working tree, untracked files included
@@ -1012,19 +1012,67 @@ def append_row(path: Path, heading: str | None, row: str) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def issue_title(f: dict) -> str:
-    """One line for an issue's title: the finding's first line without its severity tag or markup."""
-    first = re.sub(r"^[\s*-]*\**\[(?:BLOCKER|MAJOR|MINOR|NIT)[^\]]*\]\**\s*", "", f["text"][0]).replace("**", "")
-    return (first[:97] + "...") if len(first) > 100 else first
+def issue_title(f: dict, limit: int | None = 100) -> str:
+    """One line for an issue's title: the finding's first line without its severity tag or markup, cut at `limit`."""
+    first = re.sub(r"^[\s*-]*\**\[(?:BLOCKER|MAJOR|MINOR|NIT)[^\]]*\]\**\s*", "", f["text"][0]).replace("**", "").strip()
+    return (first[:limit - 3] + "...") if limit and len(first) > limit else first
+
+
+# A labelled line under a finding's first line: `Failure:` and `Fix:` (MAJOR and up), `Why:` (MINOR and NIT),
+# and the `Refuted (was MAJOR):` note `apply_refutals` adds. Indent, bullet and bold around the label are allowed.
+FINDING_PART_RE = re.compile(r"^[\s>*-]*\**(Why|Failure|Fix|Refuted \(was MAJOR\))\**:\**\s*(.*)$")
+
+
+def finding_parts(f: dict) -> dict[str, str]:
+    """A finding's text split by its labels: `head` (each `[SEV] file:line — defect` line, its tag cut), `Why`,
+    `Failure`, `Fix` and `Refuted`, each one string (heads joined with ` · `). An unlabelled line continues the
+    label above it. A merged finding (`merge_findings`) carries one head and one set of labels per reviewer; all
+    are kept, a label seen again starting a new sentence. `Why`, `Failure` and `Fix` read as sentences: a capital
+    first, a stop last."""
+    parts: dict[str, list[str]] = {"head": [], "Why": [], "Failure": [], "Fix": [], "Refuted": []}
+    current = None
+    for i, line in enumerate(f["text"]):
+        if i == 0 or FINDING_RE.match(line):
+            current = "head"
+            parts["head"].append(issue_title({"text": [line]}, limit=None))
+        elif m := FINDING_PART_RE.match(line):
+            current = "Refuted" if m.group(1).startswith("Refuted") else m.group(1)
+            parts[current].append(m.group(2).strip())
+        elif current and line.strip():
+            parts[current][-1] = f"{parts[current][-1]} {line.strip()}".strip()
+
+    def sentence(s: str) -> str:
+        return s[:1].upper() + s[1:] + ("" if s[-1:] in ".!?" else ".")
+    return {k: " · ".join(v) if k == "head" else
+            " ".join(sentence(s) if k in ("Why", "Failure", "Fix") else s for s in v if s) for k, v in parts.items()}
+
+
+def finding_draft(spec_dir: Path, slug: str, f: dict, source: str) -> str:
+    """A reviewer finding as an issue draft in `issue_body`'s five sections (`briefs/core.md` → *Issue bodies*).
+
+    Why is the finding's `Why:` (MINOR, NIT), else its `Failure:` (a MAJOR, or one refuted down to MINOR), else its
+    defect. Design is the finding as raised: `file:line — defect`. State says who found it where, and its trigger:
+    no later scenario owns a reviewer's finding, so it is picked up by the next change to the file it names.
+    Approach is the reviewer's `Fix:`. Done when follows the severity: a smell gone, or a failure a test now rules out.
+    """
+    p = finding_parts(f)
+    where = f"`{f['file']}`" if f.get("file") else "the code it names"
+    state = (f"Found by {', '.join(f['reviewers'])} in {source} of `{slug}` ({f['sev']}). It was not fixed there."
+             + (f" Refuted (was MAJOR): {p['Refuted'].rstrip('.')}." if p["Refuted"] else "")
+             + f" No later scenario owns it, so it is picked up by the next change to {where}.")
+    done = (f"The smell is gone from {where}, and a review of it no longer raises this finding."
+            if f["sev"] in ("MINOR", "NIT") else
+            "The failure under Why can no longer happen, and a test that failed before the fix passes after it.")
+    return debt_draft(spec_dir, issue_title(f), ["debt"], p["Why"] or p["Failure"] or p["head"],
+                      "The finding as raised: " + p["head"], state,
+                      p["Fix"] or "The reviewer proposed no fix: choose one from the finding under Design.", done)
 
 
 def draft_issues(spec_dir: Path, slug: str, found: list[dict], source: str) -> int:
-    """Append one issue draft per finding to the feature's ISSUES.md. Returns how many were drafted."""
+    """Append one issue draft per finding to the feature's ISSUES.md (`finding_draft`). Returns how many."""
     if not found:
         return 0
-    append_drafts(spec_dir, slug, [f"## [ ] {issue_title(f)}\n\nlabels: debt\n\n" + "\n".join(f["text"]).strip()
-                                   + f"\n\nFound by {', '.join(f['reviewers'])} in {source} of `{slug}` ({f['sev']})."
-                                   for f in found])
+    append_drafts(spec_dir, slug, [finding_draft(spec_dir, slug, f, source) for f in found])
     return len(found)
 
 
@@ -1035,11 +1083,37 @@ def feature_issue(spec_dir: Path) -> int | None:
     return int(m.group(2)) if m and m.group(2) else None
 
 
-def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
-    """Append `## [ ]` issue-draft blocks to the feature's ISSUES.md, writing its header the first time.
-    Each block ends `Found in #N`, N the feature issue, once the spec records one."""
+NOT_STATED = "Not stated when it was drafted."
+
+
+def debt_draft(spec_dir: Path, title: str, labels: list[str] | None, why: str, design: str, state: str,
+               approach: str = "", done_when: str = "") -> str:
+    """One `## [ ]` debt draft: its labels, then `issue_body`'s five sections (`briefs/core.md` → *Issue bodies*).
+
+    State ends `Found in #N`, N the feature issue, once the spec records one. A part the drafter left blank says
+    so (`NOT_STATED`) rather than being made up."""
     if (number := feature_issue(spec_dir)) is not None:
-        blocks = [b.rstrip() + f"\n\nFound in #{number}" for b in blocks]
+        state = f"{state}\n\nFound in #{number}"
+    return f"## [ ] {title}\n\nlabels: {', '.join(labels or ['debt'])}\n\n" + issue_body(
+        why.strip() or NOT_STATED, design, state, approach.strip() or NOT_STATED, done_when.strip() or NOT_STATED)
+
+
+def spec_link(spec_dir: Path) -> str:
+    """A debt's Design section when nothing finer is known: a link to the feature's specification."""
+    rel = f"docs/specs/{spec_dir.name}.md"
+    return (f"The specification: [{rel}]({rel})." if spec_file(spec_dir).is_file()
+            else f"`{spec_dir.name}` has no specification committed yet.")
+
+
+def debt_state(found: str, trigger: str) -> str:
+    """A debt's State section: where it was found, and its trigger — when to pick it up — or that none was named."""
+    return found + (f" When to pick it up: {trigger.strip().rstrip('.')}." if trigger.strip() else
+                    " No trigger was named when it was drafted, so it waits for the next change to this code.")
+
+
+def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
+    """Append `## [ ]` issue-draft blocks (`debt_draft`) to the feature's ISSUES.md, writing its header the first
+    time."""
     path = issues_file(spec_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = path.read_text().rstrip() if path.is_file() else (
@@ -1052,20 +1126,22 @@ def append_drafts(spec_dir: Path, slug: str, blocks: list[str]) -> Path:
 
 
 def debt(root: Path, slug: str, title: str, body: str = "", labels: list[str] | None = None,
-         scenario: str | None = None) -> int:
+         scenario: str | None = None, trigger: str = "", approach: str = "", done_when: str = "") -> int:
     """Draft a debt found while building `slug` and not fixed as an issue in its ISSUES.md.
 
     Debt goes here the moment it is found, never into STATE.md: the drafts live outside the worktree
     (`issues_file()`), so they outlive the run and the worktree. The draft reaches GitHub on the user's yes (`file-issues`);
-    a later scenario that closes it first deletes the block.
+    a later scenario that closes it first deletes the block. Its body is `debt_draft`'s five sections: `body` is
+    Why, the spec (and scenario) Design, where it was found plus `trigger` State, then `approach` and `done_when`.
     """
     if not title.strip():
         print("debt: needs the issue's title", file=sys.stderr)
         return 2
     where = f"in {scenario} of `{slug}`" if scenario else f"while building `{slug}`"
-    issues = append_drafts(spec_folder(root, slug), slug, [
-        f"## [ ] {title.strip()}\n\nlabels: {', '.join(labels or ['debt'])}\n\n"
-        + (body.strip() + "\n\n" if body.strip() else "") + f"Found {where}, not fixed in it."])
+    spec_dir = spec_folder(root, slug)
+    issues = append_drafts(spec_dir, slug, [debt_draft(
+        spec_dir, title.strip(), labels, body, spec_link(spec_dir),
+        debt_state(f"Found {where}, not fixed in it.", trigger), approach, done_when)])
     print(f"drafted `{title.strip()}` in {issues} — filed with `{script('pipeline.py')} file-issues {slug} --yes` "
           "on the user's yes")
     return 0
@@ -1389,7 +1465,7 @@ def batch_malformed(path: Path) -> list[str]:
 
 def batch(root: Path, slug: str, units: list[str] | None = None, done: str | None = None,
           tests: str | None = None, found: str | None = None, body: str = "",
-          labels: list[str] | None = None) -> int:
+          labels: list[str] | None = None, trigger: str = "", approach: str = "", done_when: str = "") -> int:
     """A mechanical migration's checklist, `.runs/<slug>/BATCH.md`: one unit per package, worked one
     at a time with that package's tests green. No spec and no pipeline reviewers; the pull request is
     reviewed as any other. Exit 0 with the next unit printed (or after `--found` drafts an issue), 3 when every
@@ -1455,9 +1531,9 @@ def batch(root: Path, slug: str, units: list[str] | None = None, done: str | Non
         if not found.strip():
             print("batch: `--found` needs the issue's title", file=sys.stderr)
             return 2
-        issues = append_drafts(spec_dir, slug, [
-            f"## [ ] {found.strip()}\n\nlabels: {', '.join(labels or ['debt'])}\n\n"
-            + (body.strip() + "\n\n" if body.strip() else "") + f"Found during the `{slug}` batch, not fixed in it."])
+        issues = append_drafts(spec_dir, slug, [debt_draft(
+            spec_dir, found.strip(), labels, body, f"The `{slug}` batch: a mechanical migration, with no specification.",
+            debt_state(f"Found during the `{slug}` batch, not fixed in it.", trigger), approach, done_when)])
         print(f"drafted `{found.strip()}` in {issues} — filed with `{script('pipeline.py')} file-issues {slug} --yes` "
               "on the user's yes")
     left = [u for u, ok, _ in rows if not ok]
@@ -1667,7 +1743,8 @@ ISSUE_PARTS = ("Why", "Design", "State", "Approach", "Done when")
 
 def issue_body(*texts: str) -> str:
     """An issue body: one `### <part>` heading per `ISSUE_PARTS`, each over its text in full sentences, with
-    blank lines between, so it reads as sections on GitHub rather than a wall of `Label:` lines."""
+    blank lines between, so it reads as sections on GitHub rather than a wall of `Label:` lines. Every issue the
+    pipeline drafts is built with it — `open_issues` and `debt_draft`; the rule is `briefs/core.md` → *Issue bodies*."""
     return "\n\n".join(f"### {part}\n\n{text}" for part, text in zip(ISSUE_PARTS, texts, strict=True))
 
 
@@ -2777,7 +2854,12 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("debt", help="a debt found while building and not fixed: an issue draft in ISSUES.md")
     d.add_argument("slug")
     d.add_argument("title", help="the issue's title")
-    d.add_argument("--body", default="", help="the drafted issue's body: what is owed and why it was left")
+    d.add_argument("--why", "--body", dest="body", default="",
+                   help="the drafted issue's Why: what is owed, for whom, and why it was left")
+    d.add_argument("--trigger", default="", metavar="WHEN",
+                    help="State: when to pick it up (a later scenario, a release, the next change to a file)")
+    d.add_argument("--approach", default="", help="Approach: how it should be fixed, if known")
+    d.add_argument("--done-when", default="", help="Done when: what shows it is paid off")
     d.add_argument("--label", action="append", help="a label (repeatable; default debt)")
     d.add_argument("--scenario", metavar="SCENARIO-NN", help="the scenario it was found in")
     d.add_argument("--close", metavar="HOW", help="this build paid the drafted debt `title` off: remove its open "
@@ -2790,7 +2872,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--done", metavar="UNIT", help="tick a unit — with --tests")
     b.add_argument("--tests", metavar="CMD", help="the command that ran the unit's package tests green")
     b.add_argument("--found", metavar="TITLE", help="draft an issue in ISSUES.md for something found and not fixed")
-    b.add_argument("--body", default="", help="the drafted issue's body")
+    b.add_argument("--why", "--body", dest="body", default="", help="the drafted issue's Why: what is owed and why")
+    b.add_argument("--trigger", default="", metavar="WHEN",
+                    help="State: when to pick it up (a later scenario, a release, the next change to a file)")
+    b.add_argument("--approach", default="", help="Approach: how it should be fixed, if known")
+    b.add_argument("--done-when", default="", help="Done when: what shows it is paid off")
     b.add_argument("--label", action="append", metavar="L", help="the drafted issue's labels (default: debt)")
     rt = sub.add_parser("retro", help="the feature's retro on its own (/pipeline:retro); with --reply, write it")
     rt.add_argument("slug")
@@ -2879,11 +2965,13 @@ def _run(args: argparse.Namespace, root: Path) -> int:
                 return 2
             # One unit a line; a line that starts with `#` is a comment. A `#` inside a name is part of it.
             units = [l.strip() for l in src.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
-        return batch(root, args.slug, units, args.done, args.tests, args.found, args.body, args.label)
+        return batch(root, args.slug, units, args.done, args.tests, args.found, args.body, args.label,
+                     args.trigger, args.approach, args.done_when)
     if args.cmd == "debt":
         if args.close:
             return close_debt(root, args.slug, args.title, args.close)
-        return debt(root, args.slug, args.title, args.body, args.label, args.scenario)
+        return debt(root, args.slug, args.title, args.body, args.label, args.scenario, args.trigger, args.approach,
+                    args.done_when)
     if args.cmd == "gate":
         return 0 if gate(root, args.slug, args.round, args.base, args.pre_fix, args.only, args.exclude) else 2
     if args.cmd == "retro":

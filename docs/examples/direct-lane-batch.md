@@ -41,7 +41,7 @@ It ticks the unit and prints the next one.
 While migrating `services/core/session`, a handler turns out to swallow an error. That is not this migration. It becomes an issue draft at once:
 
 ```bash
-scripts/pipeline.py batch errors-migration --found "session handler swallows the store error" --body "services/core/session/handler.go:88 returns nil when Delete fails." --label bug
+scripts/pipeline.py batch errors-migration --found "session handler swallows the store error" --why "services/core/session/handler.go:88 returns nil when Delete fails, so a failed logout looks like a success." --trigger "the next change to services/core/session" --label bug
 ```
 
 Drafts are filed only on the user's yes:

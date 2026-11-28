@@ -166,8 +166,14 @@ it:
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline.py debt <feature-slug> "<title>" --scenario SCENARIO-XX \
-  --body "<what is owed, why it was left, and the later scenario that should close it if any>"
+  --why "<what is owed, for whom, and why it was left>" \
+  --trigger "<when to pick it up: the later scenario that should close it, or the next change to a file>" \
+  --approach "<how to fix it, if known>" --done-when "<what shows it is paid off>"
 ```
+
+The draft's body is the five sections of `${CLAUDE_PLUGIN_ROOT}/briefs/core.md` → *Issue bodies*; the
+script writes Design (the spec and scenario) and the rest of State. A flag you leave out is written as
+not stated, never guessed.
 
 It lands in the feature's issue drafts beside the reviewers' findings below MAJOR (in the git
 common directory, outside the worktree, so it outlives it), and reaches GitHub only on the user's

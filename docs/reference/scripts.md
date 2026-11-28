@@ -22,8 +22,8 @@ The conductor and its helpers. Subcommands that write to GitHub list what they w
 | `open-issues <slug>` | Lists the spec's feature issue and scenario sub-issues; with `--yes`, creates them. |
 | `file-issues <slug>` | Lists a feature's issue drafts; with `--yes`, creates them. `--drop TITLE` removes one. |
 | `post-review <slug> --pr N` | Shows a gate round's findings as one PR review; with `--yes`, posts it. |
-| `debt <slug> <title>` | Drafts an issue for a debt found while building and not fixed. `--close HOW` removes the draft when a build pays it off. |
-| `batch <slug>` | The Direct lane: writes a checklist with `--units` or `--from-file`, ticks a unit with `--done` and `--tests`, drafts an issue with `--found`. |
+| `debt <slug> <title>` | Drafts an issue for a debt found while building and not fixed, in the five issue-body sections: `--why`, `--trigger` (its State), `--approach`, `--done-when`. `--close HOW` removes the draft when a build pays it off. |
+| `batch <slug>` | The Direct lane: writes a checklist with `--units` or `--from-file`, ticks a unit with `--done` and `--tests`, drafts an issue with `--found` (the same section flags as `debt`). |
 | `retro <slug>` | Prints the retro brief; with `--reply FILE`, writes the retro. |
 
 ### Flags of `next`

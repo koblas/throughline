@@ -52,3 +52,7 @@ One contract for every reviewer; each reviewer's own file gives its domain examp
 
 A finding with no concrete failure is downgraded to MINOR and labeled as such. Only BLOCKER
 and MAJOR block a gate.
+
+A finding left unfixed becomes an issue draft (`core.md` → *Issue bodies*): its `Why:` (else its
+`Failure:`) is the issue's Why and its `Fix:` the Approach. Write both as full sentences that a
+reader outside this review can act on.
