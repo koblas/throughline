@@ -1479,8 +1479,8 @@ def gh(root: Path, *args: str) -> subprocess.CompletedProcess:
 def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
     """The spec's tracker entries: the feature issue, the triage brief on it, one sub-issue per scenario.
 
-    Every body is five lines: Why (what is missing and for whom: `feature_why`, `scenario_why`), Design
-    (the spec path, or the scenario's anchor in it), State, Approach, Done when.
+    Every body is `issue_body`'s five sections: Why (what is missing and for whom: `feature_why`,
+    `scenario_why`), Design (the spec path, or the scenario's anchor in it), State, Approach, Done when.
 
     Without `yes` it lists what would be created. With it, each create is claimed first (`Issue: ~`,
     `Feature issue: ~`) and the number written after, so a run cut off part-way resumes with the rest and
@@ -1543,10 +1543,11 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
 
     if not feature:
         set_link(path, "Feature issue", "~")
-        number = create(title, ["feature", lane, *areas], "\n".join([
-            feature_why(text, title), f"Design: [{rel}]({rel})", "State: approved, not built",
-            f"Approach: one sub-issue per scenario, built in order by `{script('pipeline.py')} next`",
-            "Done when: every sub-issue is closed and the gate has passed"]))
+        number = create(title, ["feature", lane, *areas], issue_body(
+            feature_why(text, title), f"The specification: [{rel}]({rel}).",
+            "Approved, not built yet.",
+            f"One sub-issue per scenario, built in order by `{script('pipeline.py')} next`.",
+            "Every sub-issue is closed and the gate has passed."))
         if number is None:
             return 1
         if not number:
@@ -1592,12 +1593,13 @@ def open_issues(root: Path, slug: str, yes: bool, pause: float = 0.0) -> int:
             time.sleep(pause)
         set_scenario_issue(path, b["id"], "~")
         anchor = github_anchor(f"{b['id']} — {b['title']}" if b["title"] else b["id"])
-        number = create(b["title"] or b["id"], ["scenario", *areas], "\n".join([
-            scenario_why(b), f"Design: [{rel} → {b['id']}]({rel}#{anchor})", "State: not built",
-            f"Approach: {b['action'] or 'see the scenario'}; " + ("an architect plans it" if b["size"] == "large"
-                                                                  else "its first developer run plans it"),
-            f"Done when: its acceptance test passes and every case of {b['id']} has a test; the PR that builds "
-            "it closes this (`Closes #N`)"]))
+        number = create(b["title"] or b["id"], ["scenario", *areas], issue_body(
+            scenario_why(b), f"The scenario in the specification: [{rel} → {b['id']}]({rel}#{anchor}).",
+            "Not built yet.",
+            (f"Build `{b['action'].strip('`')}`. " if b["action"] else "Build what the scenario describes. ")
+            + ("An architect plans it first." if b["size"] == "large" else "Its first developer run plans it."),
+            f"Its acceptance test passes and every case of {b['id']} has a test. The PR that builds it closes "
+            "this issue (`Closes #N`)."))
         if number is None:
             return 1
         if not number:
@@ -1645,19 +1647,28 @@ def claim(root: Path, number: int | None, lane: str | None, yes: bool) -> int:
 
 
 def feature_why(text: str, title: str) -> str:
-    """The feature issue's first line: what is missing and for whom, from the spec's *Intent* section —
+    """The feature issue's Why section: what is missing and for whom, from the spec's *Intent* section —
     its `**Primary goal**:` line, else the section's first line, else the title."""
     intent = section(text, "Intent and out of scope") or ""
     goal = re.search(r"^\*\*Primary goal\*\*:\s*(.+)$", intent, re.M)
     first = next((l.strip() for l in intent.splitlines() if l.strip()), "")
     said = (goal.group(1) if goal else first or title).strip().rstrip(".")
-    return f"Why: not possible yet — {said}."
+    return f"Not possible yet: {said}."
 
 
 def scenario_why(block: dict) -> str:
-    """A scenario issue's first line: what is missing and for whom, from its title and its `Action:`."""
+    """A scenario issue's Why section: what is missing and for whom, from its title and its `Action:`."""
     title = block["title"] or block["id"]
-    return f"Why: not built yet — {title}" + (f" (`{block['action'].strip('`')}`)" if block["action"] else "") + "."
+    return f"Not built yet: {title}" + (f" (`{block['action'].strip('`')}`)" if block["action"] else "") + "."
+
+
+ISSUE_PARTS = ("Why", "Design", "State", "Approach", "Done when")
+
+
+def issue_body(*texts: str) -> str:
+    """An issue body: one `### <part>` heading per `ISSUE_PARTS`, each over its text in full sentences, with
+    blank lines between, so it reads as sections on GitHub rather than a wall of `Label:` lines."""
+    return "\n\n".join(f"### {part}\n\n{text}" for part, text in zip(ISSUE_PARTS, texts, strict=True))
 
 
 def gh_issue_states(root: Path, numbers: list) -> dict[int, str]:

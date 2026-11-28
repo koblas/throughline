@@ -106,7 +106,7 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertIn("--label scenario --label area:sharing", self.creates()[1])
         self.assertIn("issue comment 1 --body-file", "\n".join(self.calls()))
         self.assertIn("api -X POST repos/{owner}/{repo}/issues/1/sub_issues -F sub_issue_id=9002", self.calls())
-        self.assertIn("Design: [docs/specs/demo.md → SCENARIO-01](docs/specs/demo.md#scenario-01--owner-shares-a-task)",
+        self.assertIn("### Design||The scenario in the specification: [docs/specs/demo.md → SCENARIO-01](docs/specs/demo.md#scenario-01--owner-shares-a-task)",
                       self.creates()[1])
 
     def test_a_second_run_opens_nothing_more(self):
@@ -278,26 +278,29 @@ class OpenIssuesTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("Issue: #3", self.spec.read_text())
 
-    def body(self, create: str) -> list[str]:
-        """An `issue create` call's body, one line per part (the fake gh logs newlines as `|`)."""
-        return create.split(" --body ", 1)[1].split(" --label ", 1)[0].split("|")
+    def body(self, create: str) -> dict[str, str]:
+        """An `issue create` call's body as {heading: text}, in order (the fake gh logs newlines as `|`)."""
+        raw = create.split(" --body ", 1)[1].split(" --label ", 1)[0]
+        chunks = raw.split("||")
+        self.assertTrue(all(h.startswith("### ") for h in chunks[::2]), raw)
+        return {h.removeprefix("### "): t for h, t in zip(chunks[::2], chunks[1::2])}
 
     def test_the_feature_issue_opens_with_why_from_the_primary_goal_then_the_four_other_parts(self):
         self.run_open()
 
-        lines = self.body(self.creates()[0])
+        body = self.body(self.creates()[0])
 
-        self.assertEqual(lines[0], "Why: not possible yet — an owner shares one task with one member.")
-        self.assertEqual([l.split(":", 1)[0] for l in lines], ["Why", "Design", "State", "Approach", "Done when"])
+        self.assertEqual(body["Why"], "Not possible yet: an owner shares one task with one member.")
+        self.assertEqual(list(body), ["Why", "Design", "State", "Approach", "Done when"])
 
     def test_each_scenario_issue_opens_with_why_from_its_title_and_action(self):
         self.run_open()
 
         first, second = (self.body(c) for c in self.creates()[1:3])
 
-        self.assertEqual(first[0], "Why: not built yet — Owner shares a task (`SharingService.Share`).")
-        self.assertEqual(second[0], "Why: not built yet — Owner stops sharing (`SharingService.Unshare`).")
-        self.assertEqual([l.split(":", 1)[0] for l in first], ["Why", "Design", "State", "Approach", "Done when"])
+        self.assertEqual(first["Why"], "Not built yet: Owner shares a task (`SharingService.Share`).")
+        self.assertEqual(second["Why"], "Not built yet: Owner stops sharing (`SharingService.Unshare`).")
+        self.assertEqual(list(first), ["Why", "Design", "State", "Approach", "Done when"])
 
     def test_a_spec_with_no_primary_goal_line_takes_why_from_the_intent_sections_first_line(self):
         self.spec.write_text(APPROVED.replace("**Primary goal**: an owner shares one task with one member.",
@@ -305,14 +308,14 @@ class OpenIssuesTest(unittest.TestCase):
 
         self.run_open()
 
-        self.assertEqual(self.body(self.creates()[0])[0], "Why: not possible yet — Owners cannot share a task with anyone today.")
+        self.assertEqual(self.body(self.creates()[0])["Why"], "Not possible yet: Owners cannot share a task with anyone today.")
 
     def test_a_scenario_with_no_action_takes_why_from_its_title_alone(self):
         self.spec.write_text(pl.spec_check().stamped(SPEC.replace("Action: `SharingService.Unshare`\n", ""), "2026-11-25"))
 
         self.run_open()
 
-        self.assertEqual(self.body(self.creates()[2])[0], "Why: not built yet — Owner stops sharing.")
+        self.assertEqual(self.body(self.creates()[2])["Why"], "Not built yet: Owner stops sharing.")
 
 
 if __name__ == "__main__":
