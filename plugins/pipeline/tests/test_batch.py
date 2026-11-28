@@ -119,10 +119,25 @@ class BatchTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         issues = pl.issues_file(pl.spec_folder(self.root, "uerr")).read_text()
-        self.assertIn("## [ ] Drop the dead helper in libs/a\n\nlabels: debt\n\nNothing calls it.", issues)
+        self.assertIn("## [ ] Drop the dead helper in libs/a\n\nlabels: debt\n\n### Why\n\nNothing calls it.", issues)
+        self.assertIn("### State\n\nFound during the `uerr` batch, not fixed in it.", issues)
         self.assertIn("file-issues uerr --yes", out)
         self.assertEqual([d["title"] for d in pl.open_drafts(pl.spec_folder(self.root, "uerr"))],
                          ["Drop the dead helper in libs/a"])
+
+    def test_found_takes_the_section_flags_from_the_command_line(self):
+        self.batch(units=["go/libs/a"])
+
+        code, _, _ = self.cli("uerr", "--found", "Drop the dead helper", "--why", "Nothing calls it.",
+                              "--trigger", "the next change to go/libs/a", "--approach", "Delete it.",
+                              "--done-when", "It is gone and the tests pass.")
+
+        self.assertEqual(code, 0)
+        body = pl.open_drafts(pl.spec_folder(self.root, "uerr"))[0]["body"]
+        self.assertIn("### Why\n\nNothing calls it.", body)
+        self.assertIn("When to pick it up: the next change to go/libs/a.", body)
+        self.assertIn("### Approach\n\nDelete it.", body)
+        self.assertIn("### Done when\n\nIt is gone and the tests pass.", body)
 
     def cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()

@@ -111,6 +111,17 @@ A grep is evidence only if it can see what it is looking for.
   see generated code and its zero means nothing. The repo's verification rules name its controls.
 - State what the grep would MISS, not just what it found.
 
+## Issue bodies
+
+Every issue the pipeline drafts — feature, scenario, and debt (reviewer findings, `pipeline.py debt`,
+`batch --found`) — has five sections, each a `### ` heading over its text, blank lines between:
+**Why** (what is missing or wrong, and for whom), **Design** (the requirement, spec or finding it
+answers to), **State** (where it stands; for debt, where it was found and its trigger — when to pick
+it up — or why it has none), **Approach**, **Done when**. Write for a reader who was not in the
+conversation: full sentences, every name explained or linked, no shorthand. Clear beats short —
+there is no length target; a section is as long as it takes to be understood, and no longer. A
+part nobody knows yet says so; it is never made up. `pipeline.py`'s `issue_body` writes the shape.
+
 ## Reporting
 
 - If a step comes out **green on arrival**, say so and say why. Do not manufacture a red.

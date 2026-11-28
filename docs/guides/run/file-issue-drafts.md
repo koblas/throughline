@@ -1,6 +1,6 @@
 # How to file a feature's issue drafts
 
-Every MINOR and NIT from the gate, and every debt found while building, is an issue draft. Drafts are kept in the git common directory (`<git-common-dir>/pipeline/<slug>/ISSUES.md`), outside every worktree, and reach GitHub only on a yes. Every session start lists the unfiled ones.
+Every MINOR and NIT from the gate, and every debt found while building, is an issue draft. Drafts are kept in the git common directory (`<git-common-dir>/pipeline/<slug>/ISSUES.md`), outside every worktree, and reach GitHub only on a yes. Every session start lists the unfiled ones. Each draft's body has the five sections every pipeline issue has (Why, Design, State, Approach, Done when): see [the core brief's *Issue bodies*](https://github.com/koblas/throughline/blob/main/plugins/pipeline/briefs/core.md#issue-bodies).
 
 ## 1. List them
 
