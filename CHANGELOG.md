@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/koblas/throughline/compare/v0.6.0...v0.7.0) (2026-11-28)
+
+
+### Features
+
+* **pipeline:** one issue-body rule for every drafted issue, debt included ([#36](https://github.com/koblas/throughline/issues/36)) ([2e29a29](https://github.com/koblas/throughline/commit/2e29a292845666fe02532a1c677ce970627948c9))
+
 ## [0.6.0](https://github.com/koblas/throughline/compare/v0.5.0...v0.6.0) (2026-11-28)
 
 
