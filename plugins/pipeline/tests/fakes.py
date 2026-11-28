@@ -13,7 +13,8 @@ are installed, so a test means the same on every machine and in CI.
   files, the module path), `go test` exits as the first matching rule says (each rule matches text in
   the package's sources, after any `-overlay`), `-coverprofile` writes the rule's profile, and
   everything else (`build`, `vet`, `env`, `mod`) succeeds quietly.
-- every other tool is `fake_tool.py`: it exits 0, or as `tools.set(name, exit=…, output=…)` says.
+- every other tool is `fake_tool.py`: it exits 0, or as `tools.set(name, exit=…, output=…)` says;
+  `report=` makes it write that istanbul json where `--coverage.reportsDirectory=` points, as vitest does.
 
 Every call is logged as JSON (tool, argv, cwd) and read back with `calls()`.
 """
@@ -53,13 +54,14 @@ class FakeTools:
         """Put one more fake tool on PATH."""
         script = HERE / ("fake_go.py" if name == "go" else "fake_tool.py")
         launcher = self.bin / name
-        launcher.write_text(f"#!{sys.executable}\nimport runpy, sys\nsys.argv[0] = {name!r}\n"
+        # run_path sets argv[0] to the script's own path, so the tool's name travels in the environment.
+        launcher.write_text(f"#!{sys.executable}\nimport os, runpy\nos.environ['FAKE_TOOL_NAME'] = {name!r}\n"
                             f"runpy.run_path({str(script)!r}, run_name='__main__')\n")
         launcher.chmod(0o755)
 
-    def set(self, name: str, exit: int = 0, output: str = "") -> None:
+    def set(self, name: str, exit: int = 0, output: str = "", report: dict | None = None) -> None:
         """How a `fake_tool.py` tool answers every call from now on."""
-        (self.dir / f"{name}.json").write_text(json.dumps({"exit": exit, "output": output}))
+        (self.dir / f"{name}.json").write_text(json.dumps({"exit": exit, "output": output, "report": report}))
 
     def go_test_rule(self, contains: dict[str, str], exit: int = 0, output: str = "", profile: str = "") -> None:
         """`go test` exits `exit` and prints `output` when, for every suffix in `contains`, a source file of

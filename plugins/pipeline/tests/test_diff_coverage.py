@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fakes  # noqa: E402 — the toolchain stand-ins
+import repo_fixture  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent / "scripts"
 loader = importlib.util.spec_from_file_location("diff_coverage", HERE / "diff-coverage.py")
@@ -266,6 +267,77 @@ class ProfileRunTest(unittest.TestCase):
 
         self.assertEqual(len(found), 1, found)
         self.assertRegex(found[0], r"^go/p/p\.go:5-6:")
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args], cwd=root, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+class TsCliTest(unittest.TestCase):
+    """`diff-coverage.py --ts WORKSPACE`: the ts surface's `test` step runs with `{cover}` filled (npm faked,
+    writing the report vitest would), and the changed code it never ran is reported."""
+
+    def setUp(self):
+        self.tools = fakes.install(self)
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.root)
+        git(self.root, "init", "-q")
+        repo_fixture.install(self.root, profile=False)
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "init")
+        self.base = git(self.root, "rev-parse", "HEAD")
+        self.file = self.root / "frontend" / "packages" / "app" / "src" / "sign.ts"
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(TS_SRC)
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(HERE / "diff-coverage.py"), "--base", self.base, *args],
+                              cwd=self.root, capture_output=True, text=True)
+
+    def report(self, neg: int) -> dict:
+        """TS_SRC's report with the `if` arm (lines 2-4) and its `return "neg"` run `neg` times; the rest ran."""
+        return istanbul(self.file, s=(1, neg, 1, 1), b=((neg, 1), (1, 1)), f=(1, 1))
+
+    def test_an_untested_changed_arm_is_reported_and_fails(self):
+        self.tools.set("npm", report=self.report(0))
+
+        out = self.cli("--ts", "app")
+
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertRegex(out.stdout, r"^frontend/packages/app/src/sign\.ts:2-4: changed code never runs")
+        test = self.tools.calls("npm")[-1]
+        self.assertEqual(Path(test["cwd"]).resolve(), self.root / "frontend")
+        self.assertIn("@content-buddy/app", test["argv"])
+        self.assertIn("--coverage.reporter=json", test["argv"])
+
+    def test_once_the_arm_is_tested_it_passes(self):
+        self.tools.set("npm", report=self.report(1))
+
+        out = self.cli("--ts", "app")
+
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("diff-coverage: ok", out.stdout)
+
+    def test_failing_tests_fail_without_judging_coverage(self):
+        self.tools.set("npm", exit=1, output="FAIL sign.test.ts", report=self.report(1))
+
+        out = self.cli("--ts", "app")
+
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL sign.test.ts", out.stdout)
+        self.assertIn("coverage not judged", out.stderr)
+
+    def test_a_test_step_that_writes_no_report_fails(self):
+        out = self.cli("--ts", "app")
+
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("{cover}", out.stderr)
+
+    def test_neither_packages_nor_a_workspace_is_a_usage_error(self):
+        out = self.cli()
+
+        self.assertEqual(out.returncode, 2)
 
 
 if __name__ == "__main__":
