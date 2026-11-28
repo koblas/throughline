@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/koblas/throughline/compare/v0.5.0...v0.6.0) (2026-11-28)
+
+
+### Features
+
+* **diff-coverage:** judge TypeScript from the command line ([e4ec3aa](https://github.com/koblas/throughline/commit/e4ec3aa78f245eb903a7cd3c9583dc2464827487))
+* **diff-coverage:** judge TypeScript from the command line ([548703b](https://github.com/koblas/throughline/commit/548703b969f6eaeb68dd798730318ab14cc36575)), closes [#31](https://github.com/koblas/throughline/issues/31)
+* **pipeline:** write issue bodies as headed sections, not 500-char lines ([a9df522](https://github.com/koblas/throughline/commit/a9df5222e03e5f8958c284e9696984466e2703f4))
+* **pipeline:** write issue bodies as headed sections, not 500-char lines ([1c15685](https://github.com/koblas/throughline/commit/1c156856e193b022af0a32b6a4d510ecb4e831de))
+
 ## [0.5.0](https://github.com/koblas/throughline/compare/v0.4.0...v0.5.0) (2026-11-27)
 
 
