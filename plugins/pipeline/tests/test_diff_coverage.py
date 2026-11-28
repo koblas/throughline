@@ -1,6 +1,5 @@
 """diff-coverage.py: which zero-count Go blocks, and TS statements / arms / functions, on changed lines are reported."""
 import importlib.util
-import json
 import shutil
 import subprocess
 import tempfile
