@@ -20,15 +20,19 @@ The reason is for the reviewer; the check only needs the marker.
 
 Usage (from anywhere in the repo):
   scripts/diff-coverage.py [--base REF] [--to REF] PKG [PKG ...]   # PKG relative to the Go surface root
-Runs `go test -covermode=set` on the packages itself. `check.py phase --go` calls
+  scripts/diff-coverage.py [--base REF] [--to REF] --ts WORKSPACE  # a workspace of the ts surface
+Go: runs `go test -covermode=set` on the packages itself. `check.py phase --go` calls
 `uncovered()` on the profile of the test run it already does instead.
-Exit status is non-zero when a changed block is uncovered.
+TS: runs the ts surface's `test` phase step from .claude/pipeline.json for the workspace (the
+repo's own vitest command, `{cover}` filled by `ts_cover_flags()`), then `uncovered_ts()` on the
+report it writes, judging that workspace's own production files as `check.py phase --ts` does.
+Exit status is non-zero when a changed block is uncovered, the tests fail, or no report is written.
 
 TypeScript: `uncovered_ts()` reads the istanbul json vitest writes (`coverage-final.json`, from
 `ts_cover_flags()`, which `check.py phase --ts` passes through the test step's `{cover}`) and
 reports each statement, branch arm (a ternary's, a `&&` / `??` operand, a `case`, an `if`'s
 `then`) and function that ran zero times and overlaps a changed line, with the same marker
-(`// uncovered: <why>` on its opening line or the line above). The CLI judges Go only.
+(`// uncovered: <why>` on its opening line or the line above).
 """
 
 from __future__ import annotations
@@ -204,29 +208,71 @@ def _check_module():
     return mod
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("pkgs", nargs="+", metavar="PKG", help="Go packages, relative to the Go surface's root (./services/x/)")
-    ap.add_argument("--base", help="base revision (default: the pending scenario's base, else HEAD)")
-    ap.add_argument("--to", help="revision judged (default: the working tree)")
-    args = ap.parse_args()
-    check = _check_module()
-    root = check.repo_root()
-    base = args.base or check.scenario_base(root)
-    to = args.to or check.snapshot(root)
-    config = check.pc.load(root)
+def judge_go(check, root: Path, pkgs: list[str], base: str, to: str) -> list[str] | None:
+    """Findings for the Go packages `pkgs`, from a `go test` run of its own; None when the tests fail."""
     go_dir = root / check.go_root(root)
     with tempfile.TemporaryDirectory(prefix="diff-coverage.") as tmp:
         prof = Path(tmp) / "cover.out"
-        out = subprocess.run(["go", "test", "-count=1", *cover_flags(args.pkgs, prof), *args.pkgs],
+        out = subprocess.run(["go", "test", "-count=1", *cover_flags(pkgs, prof), *pkgs],
                              cwd=go_dir, capture_output=True, text=True)
         if out.returncode != 0:
             print(check.capped(out.stdout + out.stderr))
             print("diff-coverage: go test failed; coverage not judged", file=sys.stderr)
-            return 1
+            return None
         profile = prof.read_text() if prof.is_file() else ""
-    found = uncovered(root, profile, package_dirs(go_dir, args.pkgs),
-                      lambda rel: check.changed_lines(root, rel, base, to), config.generated_roots)
+    return uncovered(root, profile, package_dirs(go_dir, pkgs),
+                     lambda rel: check.changed_lines(root, rel, base, to), check.pc.load(root).generated_roots)
+
+
+def judge_ts(check, root: Path, workspace: str, base: str, to: str) -> list[str] | None:
+    """Findings for the ts surface's `workspace`, from a run of that surface's `test` phase step; None when
+    the step is missing, fails, or writes no report."""
+    args = argparse.Namespace(go=None, run=None, ts=workspace, filter=None, surface=None)
+    with tempfile.TemporaryDirectory(prefix="diff-coverage.") as tmp:
+        reports = {"go": Path(tmp) / "cover.out", "ts": Path(tmp) / "ts-cover", "script": Path(tmp) / "report"}
+        try:
+            steps = [s for s in check._steps(root, args, reports, base, to) if s[0] == "test"]
+        except check.pc.ConfigError as why:
+            print(f"diff-coverage: {why}", file=sys.stderr)
+            return None
+        if not steps:
+            print("diff-coverage: the ts surface has no `test` phase step to run", file=sys.stderr)
+            return None
+        _, cmd, cwd, *_ = steps[0]
+        out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        if out.returncode != 0:
+            print(check.capped(out.stdout + out.stderr))
+            print("diff-coverage: the ts test step failed; coverage not judged", file=sys.stderr)
+            return None
+        report = reports["ts"] / "coverage-final.json"
+        if not report.is_file():
+            print("diff-coverage: the ts test step wrote no coverage report: add `{cover}` to its `phase` "
+                  "command in .claude/pipeline.json", file=sys.stderr)
+            return None
+        return check.ts_diff_coverage(root, workspace, report, base, to)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("pkgs", nargs="*", metavar="PKG", help="Go packages, relative to the Go surface's root (./services/x/)")
+    ap.add_argument("--ts", metavar="WORKSPACE", help="a workspace of the ts surface (one of its `workspaces`)")
+    ap.add_argument("--base", help="base revision (default: the pending scenario's base, else HEAD)")
+    ap.add_argument("--to", help="revision judged (default: the working tree)")
+    args = ap.parse_args()
+    if not args.pkgs and not args.ts:
+        ap.error("pass Go packages, --ts WORKSPACE, or both")
+    check = _check_module()
+    root = check.repo_root()
+    base = args.base or check.scenario_base(root)
+    to = args.to or check.snapshot(root)
+    found: list[str] = []
+    judges = ([lambda: judge_go(check, root, args.pkgs, base, to)] if args.pkgs else []) + \
+             ([lambda: judge_ts(check, root, args.ts, base, to)] if args.ts else [])
+    for judge in judges:
+        judged = judge()
+        if judged is None:
+            return 1
+        found += judged
     for f in found:
         print(f)
     if found:

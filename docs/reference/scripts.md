@@ -75,7 +75,7 @@ Checks a feature spec, `docs/specs/<slug>.md`. Exit status is non-zero if any ch
 |---|---|
 | `session-context.py` | Prints the workflow rules into every session at start. |
 | `new-repo.py` | Writes the files, labels and GitHub settings of `/pipeline:new-repo`. |
-| `diff-coverage.py` | Checks every Go block the diff adds or changes is executed by a test. |
+| `diff-coverage.py` | Checks every Go block (packages) or TypeScript statement, arm and function (`--ts WORKSPACE`) the diff adds or changes is executed by a test. |
 | `mutation-sample.py` | Mutates a sample of the feature's changed lines and lists the survivors. |
 | `absence-only.py` | Lists new or changed tests that assert only that something did not happen. |
 | `race-gate.py` | The feature's single `go test -race` pass, at the first gate round. |
