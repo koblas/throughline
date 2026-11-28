@@ -233,6 +233,9 @@ Then, in order:
    `lane:light` for an `**Area**: none` spec. An adopted one (`#N (adopted)`) is not created again: it
    is relabelled `idea` → `feature` plus its lane and areas, and the line becomes `#N`. It is resumable: rerun it after a
    failure; a `~` it reports is checked on GitHub by hand, never re-created. Each issue body has
-   five parts, one line each: `Why:` (what is missing and for whom: the feature's from
-   **Primary goal**, a scenario's from its title and `Action:`), `Design:` (a requirement id or the
-   spec path), `State:`, `Approach:`, `Done when:`. The target is about 500 characters, not a limit.
+   five sections, each a `### ` heading over its text, blank lines between: **Why** (what is missing
+   and for whom: the feature's from **Primary goal**, a scenario's from its title and `Action:`),
+   **Design** (a requirement id or the spec path), **State**, **Approach**, **Done when**. Write for
+   a reader who was not in this conversation: full sentences, every name explained or linked, no
+   shorthand. Clear beats short — there is no length target; a section is as long as it takes to be
+   understood, and no longer.
