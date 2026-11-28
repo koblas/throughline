@@ -9,9 +9,11 @@ name: "release-please"
 # Config: release-please-config.json (one root component, `simple` release type;
 # refactor/chore/build/test/ci/docs/style are hidden from the notes).
 #
-# release-please signs in with GITHUB_TOKEN, so its PR starts no other workflow (checks do
-# not run on the release PR). The repository must allow GitHub Actions to create pull
-# requests (Settings > Actions > General > Workflow permissions).
+# release-please signs in with GITHUB_TOKEN, so its PR is opened by github-actions[bot]. GitHub
+# holds the runs that bot starts until someone approves them, so checks.yaml skips a pull
+# request that changes only the files this workflow bumps; the push to main after the merge
+# runs the checks. The repository must allow GitHub Actions to create pull requests
+# (Settings > Actions > General > Workflow permissions).
 
 on:
   push:

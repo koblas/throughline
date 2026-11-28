@@ -12,9 +12,19 @@ name: "checks"
 # - docs: `make docs`: docs/check.py (the reference pages cover every command, agent, skill and
 #   pipeline.json key; every page is in the nav) and the strict Zensical build (no broken links).
 #   docs.yml publishes the same build from main.
+#
+# A pull request that changes only the files release-please bumps starts no run. That is the
+# release PR: it is opened by github-actions[bot], and GitHub holds every run that bot starts
+# until someone approves it (a job-level `if` does not help, since the hold comes first). The
+# push to main that merging it makes runs every job, including the version match above.
 
 on:
   pull_request:
+    paths-ignore:
+      - CHANGELOG.md
+      - version.txt
+      - .release-please-manifest.json
+      - plugins/pipeline/.claude-plugin/plugin.json
   push:
     branches: [main]
 
